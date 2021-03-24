@@ -33,26 +33,49 @@
 #include <NTL/mat_ZZ_p.h>
 
 namespace REGEVENC {
+
+// NTL compatibility code to decouple the module form the underlying engine.
+// The module code relies on Matrix to have NumRows() and NumCols() methods
+// and on Vector to have a length() method, and on conv(toType,fromType) to
+// convert between types. But otherwise it shouldn't rely on much of NTL
+// beyond the compatibility functions below. (Of course it needs all the
+// uaual operator +, *, etc.)
+
 // in liue of "using X as Y", bring the relevant NTL types to this namespace
-typedef NTL::ZZ Modulus;
+typedef NTL::ZZ BigInt;
 typedef NTL::ZZ_p Scalar;
 typedef NTL::vec_ZZ_p Vector;
 typedef NTL::mat_ZZ_p Matrix;
+inline void initRandomness(const std::string& st) {
+    NTL::SetSeed((unsigned char*)st.data(), st.length());
+}
+inline Scalar& randomizeScalar(Scalar& s) { NTL::random(s); return s; }
+inline Vector& resize(Vector& vec, size_t n) {vec.SetLength(n); return vec;}
+inline Matrix& resize(Matrix& mat, size_t n, size_t m) {
+    mat.SetDims(n,m); return mat;
+}
+inline long randBitsize(size_t n) {return NTL::RandomBits_long(n);}
+inline BigInt& randBitsize(BigInt& bi, size_t n) {
+    NTL::RandomBits(bi, n);
+    return bi;
+}
+inline size_t randomBit() {return randBitsize(1);}
+inline BigInt scalar2bigInt(const Scalar& s) { return NTL::conv<NTL::ZZ>(s); }
 
 // Some parameters are hard-wired, others are set at runtime
 constexpr int ell=2;     // how many secret keys per party
 constexpr int sigma=2;   // keygen noise in [+-(2^{sigma}-1)]
-constexpr int skSize=63; // secret key entries in [+-(2^{skSize}-1)]
-    // We use skSize=63 for no reason at all, it might as well be drawn
-    // from noise distribution. It needs to be somewhat small, say less
-    // than sqrt(P), to provide elbow-room for the proofs.
+constexpr int skSize=60; // secret key entries in [+-(2^{skSize}-1)]
+    // We use skSize=60 for no reason at all, it might as well be drawn
+    // from thenoise distribution. It needs to be somewhat small, say
+    // less than sqrt(P), to provide elbow-room for the proofs.
 
 // The global key for our Regev encrypiton includes the variour params,
-// the CRS k-by-m matrix A over and the ell*enn-by-m matrix B with enn
+// the CRS k-by-m matrix A over and the ell*enn-by-emm matrix B with enn
 // public keys (both over Z_P).
 class GlobalKey {
-    static Modulus Pmod;
-    static Scalar deltaScalar; // = P^{1/ell}
+    static BigInt Pmod;
+    static Scalar deltaScalar; // approx P^{1/ell}
     static Scalar initPdelta(); // a function to initialize P and delta
     int nPks;     // number of ell-row public keys that are stored in B
 public:
@@ -61,7 +84,7 @@ public:
     int enn; // # of parties
     int rho; // encryption randomness in [+-(2^{rho}-1)]
 
-    static const NTL::ZZ& P() { return Pmod; }
+    static const BigInt& P() { return Pmod; }
     static const Scalar& delta() { return deltaScalar; }
 
     std::string tag; // a string to tag this public key
@@ -69,18 +92,19 @@ public:
 
     GlobalKey() = delete;
     GlobalKey(const std::string t, int k, int m, int n, int r):
-        tag(t),kay(k),emm(m),enn(n),rho(r),
-        A(NTL::INIT_SIZE,k,m),B(NTL::INIT_SIZE,ell*n,m),nPks(0)
+        tag(t),kay(k),emm(m),enn(n),rho(r),nPks(0)
     {
         if (kay<=0 || emm<=0 || enn<=0 || rho<=0) {
             throw std::runtime_error("GlobalKey with invalid parameters");
         }
+        resize(A,k,m);
+        resize(B,ell*n,m);
+
         // Fill the CRS with pseudorandom entries, derived from the tag
         NTL::RandomStreamPush prgBak;  // backup of current randomstate
-        std::string crsSeed = t+"CRS";
-        NTL::SetSeed((unsigned char*)crsSeed.data(), crsSeed.length());
+        initRandomness(t+"CRS");
         for (int i=0; i<A.NumRows(); i++) for (int j=0; j<A.NumCols(); j++) {
-            NTL::random(A[i][j]);
+            randomizeScalar(A[i][j]);
         }
     }   // prgBak restores the PRG state upon exit
 
@@ -147,8 +171,8 @@ public:
 class ZeroOneScalar {
 public:
     Scalar& randomize(Scalar& s) const {
-        long x = NTL::RandomBits_long(2); // two random bits
-        conv(s, (x&1)-(x>>1));            // return their difference
+        long x = randBitsize(2); // two random bits
+        conv(s, (x&1)-(x>>1));   // return their difference
         return s;
     }
     Scalar randomize() const { 
@@ -168,10 +192,10 @@ public:
 
     Scalar& randomize(Scalar& s) const {
 #if 1
-        NTL::ZZ zzs[2];
-        NTL::RandomBits(zzs[0], bitSize);
-        NTL::negate(zzs[1], zzs[0]);
-        conv(s, zzs[NTL::RandomBits_long(1L)]);
+        BigInt zzs[2];
+        randBitsize(zzs[0], bitSize);
+        zzs[1] = -zzs[0];
+        conv(s, zzs[randomBit()]); // convert to a Scalar mod p
 #else
         conv(s,1);
 #endif

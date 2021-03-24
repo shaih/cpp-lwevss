@@ -26,10 +26,9 @@
 
 namespace REGEVENC {
 
-Modulus GlobalKey::Pmod;
+BigInt GlobalKey::Pmod;
 Scalar GlobalKey::deltaScalar = GlobalKey::initPdelta(); // force to run initpDelta
-
-Scalar GlobalKey::initPdelta() {
+Scalar GlobalKey::initPdelta() { // Implementation is NTL-specific
     // Initizlie the NTL global modulus to 2^{252} + 27742...493
     GlobalKey::Pmod = (NTL::conv<NTL::ZZ>(1L)<<252)
                     + NTL::conv<NTL::ZZ>("27742317777372353535851937790883648493");
@@ -43,9 +42,8 @@ Scalar GlobalKey::initPdelta() {
 void GlobalKey::internalKeyGen(Matrix& sk, Matrix& noise, Matrix& pk) const
 {
     // allocate space for the different components
-    sk.SetDims(ell,kay);
-    noise.SetDims(ell,emm);
-    pk.SetDims(ell,emm);
+    resize(sk,ell,kay);
+    resize(noise,ell,emm);
 
     // Choose a random secret key, each entry in [+-(2^{skSize} -1)]
     BoundedSizeScalar rSK(skSize);
@@ -58,10 +56,7 @@ void GlobalKey::internalKeyGen(Matrix& sk, Matrix& noise, Matrix& pk) const
     for (int i=0; i<noise.NumRows(); i++) for (int j=0; j<noise.NumCols(); j++) {
         rNoise.randomize(noise[i][j]);
     }
-
-    // pk = sk*A + noise
-    NTL::mul(pk, sk, A);
-    pk += noise;
+    pk = sk * A + noise;
 }
 
 // Encrypt a vector of plaintext scalars
@@ -79,8 +74,9 @@ void GlobalKey::internalEncrypt(Vector& ctxt1, Vector& ctxt2, const Vector& ptxt
             + std::to_string(ptxt.length())+" scalars");
     }
 
-    Vector arr(NTL::INIT_SIZE,emm);   // the encryption-randomness vector
-    BoundedSizeScalar rEnc(rho );// entries are signed (rho+1)-bit integers
+    Vector arr;
+    resize(arr,emm);       // the dimension-m encryption-randomness vector
+    BoundedSizeScalar rEnc(rho);// entries are signed (rho+1)-bit integers
     for (auto& s: arr) {
         rEnc.randomize(s);
     }
@@ -107,7 +103,7 @@ void
 GlobalKey::internalDecrypt(Scalar& ptxt, Vector& noise, const Matrix& sk,
                           int idx, const Vector& ct1, const Vector& ct2) const
 {
-    static const NTL::ZZ deltaZZ = NTL::conv<NTL::ZZ>(delta());
+    static const BigInt deltaZZ = scalar2bigInt(delta());
 
     // sanity checks
     if (sk.NumRows() != ell || sk.NumCols() != kay) {
@@ -134,7 +130,7 @@ GlobalKey::internalDecrypt(Scalar& ptxt, Vector& noise, const Matrix& sk,
     // y = e1 -e0*Delta over the integers, and if also |e1| <Delta/2 then
     // (y mod Delta)= e1. Then extract x = -((y mod Delta)+z1)/Delta.
 
-    NTL::ZZ tmp = NTL::conv<NTL::ZZ>(noisyPtxt[0]*delta() -noisyPtxt[1]);
+    BigInt tmp = scalar2bigInt(noisyPtxt[0]*delta() -noisyPtxt[1]);
     if (tmp >= Pmod/2)
         tmp -= Pmod;
 
@@ -145,13 +141,13 @@ GlobalKey::internalDecrypt(Scalar& ptxt, Vector& noise, const Matrix& sk,
     else if (tmp < -deltaZZ/2)
         tmp +=deltaZZ;
 
-    noise.SetLength(ell); // allocate space
+    resize(noise, ell);  // allocate space
 
-    NTL::conv(noise[1], tmp);        // e1
+    conv(noise[1], tmp); // e1
     ptxt = (noise[1]+noisyPtxt[1])/ delta(); // -x=(e1+z1)/Delta
 
-    noise[0] = ptxt-noisyPtxt[0];    // -x -(-x-e0) = e0
-    NTL::negate(ptxt,ptxt);          // x
+    noise[0] = ptxt-noisyPtxt[0]; // -x -(-x-e0) = e0
+    ptxt = -ptxt;                 // x
 }
 
 } // end of namespace REGEVENC

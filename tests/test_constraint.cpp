@@ -43,8 +43,8 @@ static bool test_Constraints()
     if (c1 != c2)
         return false;
 
-    QuadConstraint q1,q2;
-    q2 = q1.addIdx(2).addIdx(3).addIdx(5).addIdx(8);
+    QuadConstraint q1;
+    q1.addIdx(2).addIdx(3).addIdx(5).addIdx(8);
     bool thrown = false;
     try { // this should throw
         q1.addIdx(3);
@@ -52,17 +52,8 @@ static bool test_Constraints()
         thrown = true;
     }
     if (!thrown) return false;
-
-    q1.equalsTo.setInteger(1000);
-    q1.enforceXeqY(Scalar().setInteger(2));
-    // This is supposed to set c1.equalsTo=1000-(2^2+2^4+2^6+2^8)=1000-340=660
-    // so q1 = {{2, 3, 5, 8}, 660}
-    q2.equalsTo.setInteger(660);
-    if (q1 != q2) {
-        std::cout << "q1="; q1.debugPrint();
-        std::cout << "q2="; q2.debugPrint();
-        return false;
-    }
+    q1.equalsTo.setInteger(660);
+    // q1 = {{2, 3, 5, 8}, 660}
 
     // set c1 = {[2->1, 4->2, 5->3, 6->4, 7->5, 8->6], 8}
     c1.terms.clear();
@@ -76,7 +67,7 @@ static bool test_Constraints()
 
     makeAlmostDisjoint(c1, q1, Scalar().setInteger(5));
     // Supposed to remove indexes 2,5,8 from c1, add index 9 (9->1) to both,
-    // and set c1.equaltsTo=0, c1.equalsTo=660-5*8=620. So we should have
+    // and set c1.equaltsTo=0, q1.equalsTo=660-5*8=620. So we should have
     // c1 = {[4->2, 6->4, 7->5, 9->1], 0}
     // q1 = {{2, 3, 5, 8, 9}, 620}
 
@@ -90,7 +81,7 @@ static bool test_Constraints()
         std::cout << "c1="; c1.debugPrint();
         return false;
     }
-    q2.indexes.clear();
+    QuadConstraint q2;
     q2.addIdx(2).addIdx(3).addIdx(5).addIdx(8).addIdx(9);
     q2.equalsTo.setInteger(620);
     if (q1 != q2) {
