@@ -152,9 +152,6 @@ public:
     // Merge two quadratic constraints, throws if they are not disjoint
     QuadConstraint& operator+=(const QuadConstraint& other);
 
-    // Transforms a constraint to enforce also x_{j_i}=y_{j_i}
-    void enforceXeqY(const Scalar& coeff);
-
     void debugPrint() const;
 };
 

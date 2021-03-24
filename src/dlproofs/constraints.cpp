@@ -134,18 +134,6 @@ void LinConstraint::merge(const std::vector<LinConstraint>& constraints,
     }
 }
 
-// Transforms an inner-product constraint to enforce also x_{j_i}=y_{j_i},
-// all we do is to subtract \sum_i x^{2i} from equalsTo
-void QuadConstraint::enforceXeqY(const Scalar& x)
-{
-    Scalar u2 = x*x;   // x^2
-    Scalar uTo2i = u2;
-    for (size_t i=0; i<indexes.size(); i++) {
-        equalsTo -= uTo2i;
-        uTo2i *= u2;
-    }
-}
-
 // Remove from c1 all the keys that appear also in c2
 static void setDifference(LinConstraint& c1, const QuadConstraint& c2)
 {
