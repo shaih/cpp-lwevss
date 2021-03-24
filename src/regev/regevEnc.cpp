@@ -39,7 +39,7 @@ Scalar GlobalKey::initPdelta() { // Implementation is NTL-specific
     // will be assigned to GlobalKey::deltaScalar
 }
 
-void GlobalKey::internalKeyGen(Matrix& sk, Matrix& noise, Matrix& pk) const
+void GlobalKey::internalKeyGen(Matrix& sk, Matrix& pk, Matrix& noise) const
 {
     // allocate space for the different components
     resize(sk,ell,kay);
@@ -60,7 +60,8 @@ void GlobalKey::internalKeyGen(Matrix& sk, Matrix& noise, Matrix& pk) const
 }
 
 // Encrypt a vector of plaintext scalars
-void GlobalKey::internalEncrypt(Vector& ctxt1, Vector& ctxt2, const Vector& ptxt) const{
+void GlobalKey::internalEncrypt(Vector& ctxt1, Vector& ctxt2,
+                                const Vector& ptxt, Vector& arr) const{
     if (A.NumRows() != kay || A.NumCols() != emm
         || B.NumRows() != ell*enn || B.NumCols() != emm) { // sanity check
         throw std::runtime_error("mal-formed public key, expected "+std::to_string(kay)
@@ -74,7 +75,6 @@ void GlobalKey::internalEncrypt(Vector& ctxt1, Vector& ctxt2, const Vector& ptxt
             + std::to_string(ptxt.length())+" scalars");
     }
 
-    Vector arr;
     resize(arr,emm);       // the dimension-m encryption-randomness vector
     BoundedSizeScalar rEnc(rho);// entries are signed (rho+1)-bit integers
     for (auto& s: arr) {

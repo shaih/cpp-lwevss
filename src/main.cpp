@@ -24,7 +24,62 @@
  
 // This file is just a convenience, a handy tool that lets us run
 // small porgrams without having to use the awkward ctest syntax.
+#include <random>
+#include <chrono> 
+using namespace std::chrono; 
 
+#include <NTL/version.h>
+#include "regevEnc.hpp"
+
+using namespace REGEVENC;
+
+int main(int, char**) {
+    // std::cout << "- Found GMP version "<<__GNU_MP__ <<std::endl;
+    std::cout << "- Found NTL version "<<NTL_VERSION <<std::endl;
+    // std::cout << "- Found Sodium version "<<SODIUM_VERSION_STRING<<std::endl;
+
+    GlobalKey gpk("testContext", /*k*/10, /*m*/100, /*n*/5, /*rho*/70);
+ 
+    //auto start = high_resolution_clock::now();
+    Matrix noise1;
+    auto [sk1,pk1] = gpk.genKeys(&noise1);
+    auto [sk2,pk2] = gpk.genKeys();
+    size_t i1 = gpk.addPK(pk1);
+    size_t i2 = gpk.addPK(pk2);
+    for (size_t i=2; i<gpk.enn; i++) // add many more pk's, to use in encryption
+        gpk.addPK(pk2);
+    //auto duration = duration_cast<seconds>(high_resolution_clock::now() - start);
+    //std::cout <<"Time for "<<gpk.enn<<" keygen: "<<duration.count()<< " seconds" << std::endl;
+
+    // encryption
+    REGEVENC::Vector ptxt(NTL::INIT_SIZE, gpk.enn);
+    for (auto& p: ptxt)
+        NTL::random(p);
+
+    //start = high_resolution_clock::now();
+    Vector r;
+    auto ctxt = gpk.encrypt(ptxt, &r);
+    //duration = duration_cast<seconds>(high_resolution_clock::now() - start);
+    //std::cout << "Time for encryption of "
+    //    <<gpk.enn<<" ptxts: "<<duration.count()<< " seconds" << std::endl;
+
+    //start = high_resolution_clock::now();
+    Vector decNoise1;
+    auto ptxt1 = gpk.decrypt(sk1, i1, ctxt, &decNoise1);
+    auto ptxt2 = gpk.decrypt(sk2, i2, ctxt);
+    //std::cout << "Time for 2 decryptions: "
+    //  << ((duration_cast<milliseconds>(high_resolution_clock::now() - start)).count()/1000.0)
+    //  << " seconds" << std::endl;
+
+    if (ptxt1 == ptxt[0] && ptxt2 == ptxt[1]) {
+        std::cout << "Yay, decryption succeeded\n";
+    } else {
+        std::cout << "Boo, decryption failed\n";
+    }
+    return 0;
+}
+
+#if 0
 #include <vector>
 #include <iostream>
 #include "bulletproof.hpp"
@@ -58,61 +113,6 @@ int main(int, char**) {
     auto [normSq, prNS] = DLPROOFS::proveNormSquared("blah", xes);
     std::cout << "norm: "<<verifyNormSquared(indexes,normSq,prNS)<<std::endl;
 
-    return 0;
-}
-
-
-#if 0
-#include <random>
-#include <chrono> 
-using namespace std::chrono; 
-
-#include <NTL/version.h>
-#include "regevEnc.hpp"
-
-//using namespace REGEVENC;
-
-int main(int, char**) {
-    std::cout << "Hello, world!\n";
-    // std::cout << "- Found GMP version "<<__GNU_MP__ <<std::endl;
-    std::cout << "- Found NTL version "<<NTL_VERSION <<std::endl;
-    // std::cout << "- Found Sodium version "<<SODIUM_VERSION_STRING<<std::endl;
-
-    REGEVENC::GlobalKey gpk("testPkey",/*kay*/9450,/*emm*/27339,/*enn*/1024,/*rho*/106);
-//    REGEVENC::GlobalKey gpk("testPkey",/*kay*/2,/*emm*/3,/*enn*/2,/*rho*/2);
-
-    // key generation
-    auto start = high_resolution_clock::now();
-    auto [sk0,noise0,pk0] = gpk.genKeys();
-    int i0 = gpk.addPK(pk0);
-    auto duration = duration_cast<seconds>(high_resolution_clock::now() - start);
-    std::cout << "Time for keygen: "<<duration.count()<< " seconds" << std::endl << std::fflush;
-
-    for (int i=1; i<gpk.enn; i++) // add many more pk's, to use in encryption
-        gpk.addPK(pk0);
-
-    // encryption
-    REGEVENC::Vector ptxt(NTL::INIT_SIZE, gpk.enn);
-    for (auto& p: ptxt)
-        NTL::random(p);
-
-    start = high_resolution_clock::now();
-    auto ctxt = gpk.encrypt(ptxt);
-    duration = duration_cast<seconds>(high_resolution_clock::now() - start);
-    std::cout << "Time for encryption of "
-        <<gpk.enn<<" ptxts: "<<duration.count()<< " seconds" << std::endl << std::fflush;
-
-    start = high_resolution_clock::now();
-    auto [ptxt0, decNoise0] = gpk.decrypt(sk0, i0, ctxt);
-    std::cout << "Time for decryption: "
-      << ((duration_cast<milliseconds>(high_resolution_clock::now() - start)).count()/1000.0)
-      << " seconds" << std::endl;
-
-    if (ptxt0 == ptxt[0]) {
-        std::cout << "Yay, decryption succeeded\n";
-    } else {
-        std::cout << "Boo, decryption failed\n";
-    }
     return 0;
 }
 #endif

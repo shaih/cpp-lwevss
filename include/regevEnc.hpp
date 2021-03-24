@@ -34,12 +34,13 @@
 
 namespace REGEVENC {
 
+/*******************************************************************/
 // NTL compatibility code to decouple the module form the underlying engine.
 // The module code relies on Matrix to have NumRows() and NumCols() methods
 // and on Vector to have a length() method, and on conv(toType,fromType) to
 // convert between types. But otherwise it shouldn't rely on much of NTL
 // beyond the compatibility functions below. (Of course it needs all the
-// uaual operator +, *, etc.)
+// uaual operator +, *, %, etc.)
 
 // in liue of "using X as Y", bring the relevant NTL types to this namespace
 typedef NTL::ZZ BigInt;
@@ -60,7 +61,9 @@ inline BigInt& randBitsize(BigInt& bi, size_t n) {
     return bi;
 }
 inline size_t randomBit() {return randBitsize(1);}
-inline BigInt scalar2bigInt(const Scalar& s) { return NTL::conv<NTL::ZZ>(s); }
+inline BigInt scalar2bigInt(const Scalar& s) {return NTL::conv<NTL::ZZ>(s);}
+typedef NTL::RandomStreamPush PRGbackupClass; // backup/restore of PRG state
+/*******************************************************************/
 
 // Some parameters are hard-wired, others are set at runtime
 constexpr int ell=2;     // how many secret keys per party
@@ -69,6 +72,12 @@ constexpr int skSize=60; // secret key entries in [+-(2^{skSize}-1)]
     // We use skSize=60 for no reason at all, it might as well be drawn
     // from thenoise distribution. It needs to be somewhat small, say
     // less than sqrt(P), to provide elbow-room for the proofs.
+
+// A class that holds witnesses to be used in proofs
+struct RegevWitnesses {
+    Vector sk, kgNoise, encRand;
+};
+
 
 // The global key for our Regev encrypiton includes the variour params,
 // the CRS k-by-m matrix A over and the ell*enn-by-emm matrix B with enn
@@ -101,7 +110,7 @@ public:
         resize(B,ell*n,m);
 
         // Fill the CRS with pseudorandom entries, derived from the tag
-        NTL::RandomStreamPush prgBak;  // backup of current randomstate
+        PRGbackupClass prgBak; // backup of current randomstate
         initRandomness(t+"CRS");
         for (int i=0; i<A.NumRows(); i++) for (int j=0; j<A.NumCols(); j++) {
             randomizeScalar(A[i][j]);
@@ -112,12 +121,18 @@ public:
     bool operator!=(const GlobalKey& other) const {return !(*this==other);}
 
     // The actual implementation of key-generation
-    void internalKeyGen(Matrix& sk, Matrix& noise, Matrix& pk) const;
+    void internalKeyGen(Matrix& sk, Matrix& pk, Matrix& noise) const;
 
-    // generate a new key-pair, returns (sk,noise,pk) (each an ell-by-something matrix)
-    std::tuple< Matrix, Matrix, Matrix > genKeys() const {
-        std::tuple< Matrix, Matrix, Matrix > ret;
-        internalKeyGen(std::get<0>(ret), std::get<1>(ret), std::get<2>(ret));
+    // generate a new key-pair, returns (sk,pk) and optionally also noise,
+    // each an ell-by-something matrix
+    std::pair< Matrix, Matrix > genKeys(Matrix* n=nullptr) const {
+        std::pair< Matrix, Matrix > ret;
+        if (n != nullptr)
+            internalKeyGen(ret.first, ret.second, *n);
+        else {
+            Matrix noise;
+            internalKeyGen(ret.first, ret.second, noise);
+        }
         return ret;
     }
 
@@ -141,29 +156,39 @@ public:
         return idx;
     }
 
-    // The actual implementation of key-generation, ctx1=CRS x r, ctxt2=PK x r
-    void internalEncrypt(Vector& ctxt1, Vector& ctxt2, const Vector& ptxt) const;
+    // The actual implementation of encryption, ctx1=CRS x r, ctxt2=PK x r
+    void internalEncrypt(Vector& ctxt1, Vector& ctxt2, const Vector& ptxt, Vector &r) const;
 
-    // Encrypt a vector of plaintext scalars
-    std::pair<Vector,Vector> encrypt(const Vector& ptxt) const {
-        std::pair<Vector,Vector> ctxt;
-        internalEncrypt(ctxt.first, ctxt.second, ptxt);
-        return ctxt;
+    // Encrypt a vector of plaintext scalars, return ct0,ct1 and optionally
+    // also the randomness that was used in encryption
+    std::pair<Vector,Vector> encrypt(const Vector& ptxt, Vector* r=nullptr) const {
+        std::pair<Vector,Vector> ct;
+        if (r != nullptr)
+            internalEncrypt(ct.first, ct.second, ptxt, *r);
+        else {
+            Vector randomness;
+            internalEncrypt(ct.first, ct.second, ptxt, randomness);
+        }
+        return ct;
     }
 
     // The actual implementation of decryption
     void internalDecrypt(Scalar& ptxt, Vector& noise, const Matrix& sk,
                          int idx, const Vector& ct1, const Vector& ct2) const;
 
-    // Decrypts a ciphertext, returning ptxt and noise. This function gets
-    // the number of rows in the CRS A (the argument kay), and also the idx
-    // of this specific secret key in the global one, and then it decrypts
-    // the relevant part of the ciphertext.
-    std::pair</*ptxt=*/Scalar,/*noise=*/Vector >
-    decrypt(const Matrix& sk, int idx, const std::pair<Vector,Vector>& ctxt) {
-        std::pair</*ptxt=*/Scalar, /*noise=*/Vector > ret;
-        internalDecrypt(ret.first, ret.second, sk, idx, ctxt.first, ctxt.second);
-        return ret;
+    // Decrypts a ciphertext, returning ptxt and optioanlly the noise.
+    // This function gets the idx of this specific secret key in the
+    // global key, and it decrypts the relevant part of the ciphertext.
+    Scalar decrypt(const Matrix& sk, int idx,
+                const std::pair<Vector,Vector>& ctxt, Vector* n=nullptr) {
+        Scalar pt;
+        if (n != nullptr)
+            internalDecrypt(pt, *n, sk, idx, ctxt.first, ctxt.second);
+        else {
+            Vector noise;
+            internalDecrypt(pt, noise, sk, idx, ctxt.first, ctxt.second);
+        }
+        return pt;
     }
 };
 
@@ -206,7 +231,5 @@ public:
         return randomize(s);
     }
 };
-
-
 } // end of namespace REGEVENC
 #endif // ifndef _REGEVENC_HPP_
