@@ -56,6 +56,9 @@ static bool test_Regev() {
     return true;
 }
 
+// FIXME: put unit tests for randomizer classes ZeroOneScalar
+// and BoundedSizeScalar from regevEnc.hpp
+
 int main(int, char**) {
     if (!test_Regev())
         std::cout << LWEVSS_TESTS::failed << std::endl;

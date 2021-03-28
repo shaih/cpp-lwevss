@@ -25,7 +25,6 @@
  **/
 #include <vector>
 #include <array>
-#include <stdexcept>
 
 #include <NTL/ZZ.h>
 #include <NTL/ZZ_p.h>
@@ -47,6 +46,8 @@ typedef NTL::ZZ BigInt;
 typedef NTL::ZZ_p Scalar;
 typedef NTL::vec_ZZ_p Vector;
 typedef NTL::mat_ZZ_p Matrix;
+inline const Scalar& zeroScalar() { return NTL::ZZ_p::zero(); }
+inline BigInt toBigInt(long n) {return NTL::conv<NTL::ZZ>(n);}
 inline void initRandomness(const std::string& st) {
     NTL::SetSeed((unsigned char*)st.data(), st.length());
 }
@@ -62,6 +63,28 @@ inline BigInt& randBitsize(BigInt& bi, size_t n) {
 }
 inline size_t randomBit() {return randBitsize(1);}
 inline BigInt scalar2bigInt(const Scalar& s) {return NTL::conv<NTL::ZZ>(s);}
+inline void scalarBytes(unsigned char *buf, const Scalar& s, size_t bufSize){
+    NTL::BytesFromZZ(buf, NTL::rep(s), bufSize);
+}
+inline void scalarFromBytes(Scalar& s, const unsigned char *buf, size_t bufSize){
+    NTL::ZZ n;
+    NTL::ZZFromBytes(n, buf, bufSize);
+    NTL::conv(s,n);
+}
+inline Scalar innerProduct(const Vector& v1, const Vector& v2) {
+    Scalar s;
+    NTL::InnerProduct(s,v1,v2);
+    return s;
+}
+inline Scalar normSquared(const Vector& v) {
+    return innerProduct(v,v);
+}
+// returns the smallest ell such that 2^{ell} >= n
+inline size_t log2roundUp(const BigInt& n) {
+    if (NTL::IsZero(n)) return 0;
+    return NTL::NumBits(n-1);
+}
+
 typedef NTL::RandomStreamPush PRGbackupClass; // backup/restore of PRG state
 /*******************************************************************/
 
@@ -73,49 +96,35 @@ constexpr int skSize=60; // secret key entries in [+-(2^{skSize}-1)]
     // from thenoise distribution. It needs to be somewhat small, say
     // less than sqrt(P), to provide elbow-room for the proofs.
 
-// A class that holds witnesses to be used in proofs
-struct RegevWitnesses {
-    Vector sk, kgNoise, encRand;
-};
-
-
 // The global key for our Regev encrypiton includes the variour params,
 // the CRS k-by-m matrix A over and the ell*enn-by-emm matrix B with enn
 // public keys (both over Z_P).
 class GlobalKey {
     static BigInt Pmod;
-    static Scalar deltaScalar; // approx P^{1/ell}
+    static Scalar deltaScalar;  // approx P^{1/ell}
     static Scalar initPdelta(); // a function to initialize P and delta
-    int nPks;     // number of ell-row public keys that are stored in B
 public:
+    static const BigInt& P() { return Pmod; }
+    static const Scalar& delta() { return deltaScalar; }
+
+    std::string tag; // a string to tag this public key
     int kay; // dimension of LWE-secret
     int emm; // #-of-columns in the CRS 
     int enn; // # of parties
     int rho; // encryption randomness in [+-(2^{rho}-1)]
 
-    static const BigInt& P() { return Pmod; }
-    static const Scalar& delta() { return deltaScalar; }
-
-    std::string tag; // a string to tag this public key
-    Matrix A, B;     // The matrix M = (A / B)
+    size_t nPks; // number of ell-row public keys that are stored in B
+    Matrix A, B; // The matrix M = (A / B)
+    unsigned char Ahash[32]; // fingerprint of the CRS A
+    unsigned char Bhash[32]; // fingerprint of the key B
 
     GlobalKey() = delete;
-    GlobalKey(const std::string t, int k, int m, int n, int r):
-        tag(t),kay(k),emm(m),enn(n),rho(r),nPks(0)
-    {
-        if (kay<=0 || emm<=0 || enn<=0 || rho<=0) {
-            throw std::runtime_error("GlobalKey with invalid parameters");
-        }
-        resize(A,k,m);
-        resize(B,ell*n,m);
+    GlobalKey(const std::string t, int k, int m, int n, int r,
+              const Matrix* crs=nullptr); // optional - a pre-selected CRS
 
-        // Fill the CRS with pseudorandom entries, derived from the tag
-        PRGbackupClass prgBak; // backup of current randomstate
-        initRandomness(t+"CRS");
-        for (int i=0; i<A.NumRows(); i++) for (int j=0; j<A.NumCols(); j++) {
-            randomizeScalar(A[i][j]);
-        }
-    }   // prgBak restores the PRG state upon exit
+    const unsigned char* const crsHash() const {return Ahash;}
+    const unsigned char* const keyHash() const {return Bhash;}
+    void setKeyHash(); // hash the matrix B
 
     bool operator==(const GlobalKey& other) const {return tag==other.tag;}
     bool operator!=(const GlobalKey& other) const {return !(*this==other);}
@@ -137,24 +146,7 @@ public:
     }
 
     // Add the generated pk to the global key and return its index
-    int addPK(const Matrix& pk) { // This function is NOT thread-safe
-        if (pk.NumRows() != ell || pk.NumCols() != emm) {
-            throw std::runtime_error("Public keys must be "+std::to_string(ell)
-                +"-by-"+std::to_string(emm)+" matrices");
-        }
-        int idx = nPks++;
-        if (idx >= enn) {
-            --nPks;
-            throw std::runtime_error("Cannot add more than "
-                +std::to_string(enn)+" keys to global public key");
-        }
-
-        // copy the ell rows from pk to the global key
-        for (int i=0; i<ell; i++) {
-            B[idx*ell +i] = pk[i];
-        }
-        return idx;
-    }
+    size_t addPK(const Matrix& pk);
 
     // The actual implementation of encryption, ctx1=CRS x r, ctxt2=PK x r
     void internalEncrypt(Vector& ctxt1, Vector& ctxt2, const Vector& ptxt, Vector &r) const;
@@ -216,14 +208,10 @@ public:
     explicit BoundedSizeScalar(int n): bitSize(n) {}
 
     Scalar& randomize(Scalar& s) const {
-#if 1
         BigInt zzs[2];
         randBitsize(zzs[0], bitSize);
         zzs[1] = -zzs[0];
         conv(s, zzs[randomBit()]); // convert to a Scalar mod p
-#else
-        conv(s,1);
-#endif
         return s;
     }
     Scalar randomize() const { 

@@ -23,6 +23,9 @@
  **/
 #include <iostream>
 #include "regevEnc.hpp"
+extern "C" {
+    #include <sodium.h>
+}
 
 namespace REGEVENC {
 
@@ -37,6 +40,66 @@ Scalar GlobalKey::initPdelta() { // Implementation is NTL-specific
     // Initialize delta = 2^{126} as a ZZ_p
     return NTL::to_ZZ_p(NTL::conv<NTL::ZZ>(1L)<<126);
     // will be assigned to GlobalKey::deltaScalar
+}
+
+GlobalKey::GlobalKey(const std::string t, int k, int m, int n, int r, const Matrix* crs):
+        tag(t),kay(k),emm(m),enn(n),rho(r),nPks(0) {
+    if (kay<=0 || emm<=0 || enn<=0 || rho<=0) {
+        throw std::runtime_error("GlobalKey with invalid parameters");
+    }
+    resize(A,k,m);
+    resize(B,ell*n,m);
+
+    // Fill the CRS with pseudorandom entries, derived from the tag,
+    // also hash them to get a fingerprint
+    std::string t2 = tag+"CRS";
+    crypto_generichash_state state;
+    crypto_generichash_init(&state, (unsigned char*)t2.data(), t2.size(), sizeof(Ahash));
+
+    PRGbackupClass prgBak; // backup of current randomstate
+    initRandomness(t2);
+    unsigned char buf[32];
+    for (int i=0; i<A.NumRows(); i++) for (int j=0; j<A.NumCols(); j++) {
+        if (crs != nullptr) // use provided CRS
+            A[i][j] = (*crs   )[i][j];
+        else
+            randomizeScalar(A[i][j]); // select a new random scalar
+        scalarBytes(buf, A[i][j], sizeof(buf));
+        crypto_generichash_update(&state, buf, sizeof(buf));
+    }
+    crypto_generichash_final(&state, Ahash, sizeof(Ahash));
+}   // prgBak restores the PRG state upon exit
+
+// hash the key matrix B
+void GlobalKey::setKeyHash() {
+    crypto_generichash_state state;
+    crypto_generichash_init(&state, (unsigned char*)"RegevKey", 8, sizeof(Bhash));
+    unsigned char buf[32];
+    for (int i=0; i<B.NumRows(); i++) for (int j=0; j<B.NumCols(); j++) {
+        scalarBytes(buf, B[i][j], sizeof(buf));
+        crypto_generichash_update(&state, buf, sizeof(buf));
+    }
+    crypto_generichash_final(&state, Bhash, sizeof(Bhash));
+}
+
+    // Add the generated pk to the global key and return its index
+size_t GlobalKey::addPK(const Matrix& pk) { // This function is NOT thread-safe
+    if (pk.NumRows() != ell || pk.NumCols() != emm) {
+        throw std::runtime_error("Public keys must be "+std::to_string(ell)
+            +"-by-"+std::to_string(emm)+" matrices");
+    }
+    size_t idx = nPks++;
+    if (idx >= enn) {
+        --nPks;
+        throw std::runtime_error("Cannot add more than "
+            +std::to_string(enn)+" keys to global public key");
+    }
+
+    // copy the ell rows from pk to the global key
+    for (int i=0; i<ell; i++) {
+        B[idx*ell +i] = pk[i];
+    }
+    return idx;
 }
 
 void GlobalKey::internalKeyGen(Matrix& sk, Matrix& pk, Matrix& noise) const
