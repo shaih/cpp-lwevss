@@ -1,0 +1,128 @@
+/* regevProofs.cpp - A 0/+-1 matrix
+ * 
+ * Copyright (C) 2021, LWE-PVSS
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining
+ * a copy of this software and associated documentation files (the
+ * "Software"), to deal in the Software without restriction, including
+ * without limitation the rights to use, copy, modify, merge, publish,
+ * distribute, sublicense, and/or sell copies of the Software, and to
+ * permit persons to whom the Software is furnished to do so, subject
+ * to the following conditions:
+ * 
+ * The above copyright notice and this permission notice shall be included
+ * in all copies or substantial portions of the Software.
+ * 
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+ * OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+ * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR
+ * OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+ * ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+ * OTHER DEALINGS IN THE SOFTWARE.
+ **/
+#include <iostream>
+#include <stdexcept>
+#include "regevEnc.hpp" // brings in NTL compatibility
+#include "ternaryMatrix.hpp"
+extern "C" {
+    #include <sodium.h>
+}
+
+namespace REGEVENC {
+
+    // fill with random 0/+-1 values, Pr[0]=1/2, Pr[+-1]=1/4
+TernaryMatrix& TernaryMatrix::random() {
+    size_t nBytes = NumRows() * ((NumCols()+3)/4);
+    unsigned char bytes[nBytes];
+    randombytes_buf(bytes, nBytes); // fill 1st buffer with random bytes
+    return setFromBytes(bytes, NumRows(), NumCols());
+}
+
+    // Set the value from the give nbits, assumes that sizeof(bits)>=n*ceil(m/4)
+    // If the given bits are random then Pr[0]=1/2, Pr[+-1]=1/4
+TernaryMatrix& TernaryMatrix::setFromBytes(unsigned char* bytes)
+{
+    const size_t bytesInRow = (NumCols()+3)/4;
+    size_t rowByteIdx = 0; // index in bytes[]
+    for (auto &r : rows) {
+        for (size_t i=0; i<bytesInRow; i++) { // four 2-bit values from each byte
+            unsigned char theByte = bytes[rowByteIdx+i];
+            // for each pair of bits, if both are one then set both to zero
+            unsigned char mask1 = theByte ^ ((theByte & 0xaa)>>1);
+            unsigned char mask2 = (mask1<<1)| 0x55; //theByte ^ ((theByte & 0x55)<<1);
+            r.rep[i] = theByte & mask1 & mask2;
+        }
+        rowByteIdx += bytesInRow;
+    }
+    return *this;
+}
+
+void leftVecMult(Vector& result, const Vector& v, const TernaryMatrix& mat)
+{
+    if (v.length() != mat.NumRows()) {
+        throw std::runtime_error("TernaryMatrix::leftVecMult: v*M dimension mismatch");
+    }
+    resize(result, mat.NumCols());
+    for (size_t j=0; j<result.length(); j++)
+        clear(result[j]);
+
+    Vector minusV = -v;
+    for (size_t i=0; i<v.length(); i++) {
+        const Scalar* vals[] = {&minusV[i], &zeroScalar(), &v[i] };
+        for (size_t j=0; j<result.length(); j++) {
+            int m_ij = mat[i][j];          // a -1/0/1 value
+            result[j] += *(vals[m_ij +1]); // 0/1/2 index into vals
+        }
+    }
+}
+
+void rightVecMult(Vector& result, const TernaryMatrix& mat, const Vector& v)
+{
+    if (v.length() != mat.NumCols()) {
+        throw std::runtime_error("TernaryMatrix::rightVecMult: M*v dimension mismatch");
+    }
+    resize(result, mat.NumRows());
+    for (size_t j=0; j<result.length(); j++)
+        clear(result[j]);
+
+    Vector minusV = -v;
+    for (size_t i=0; i<v.length(); i++) {
+        const Scalar* vals[] = { &minusV[i], &zeroScalar(), &v[i] };
+        for (size_t j=0; j<result.length(); j++) {
+            int m_ji = mat[j][i];          // a -1/0/1 value
+            result[j] += *(vals[m_ji +1]); // 0/1/2 index into vals
+        }
+    }
+}
+
+void leftMatMult(Matrix& result, const Matrix& mat1, const TernaryMatrix& mat2)
+{
+    if (mat1.NumCols() != mat2.NumRows()) {
+        throw std::runtime_error("TernaryMatrix::leftMatMult: M1*M2 dimension mismatch");
+    }
+    resize(result, mat1.NumRows(), mat2.NumCols());
+    for (size_t i=0; i<result.NumRows(); i++)
+        leftVecMult(result[i], mat1[i], mat2); // vec-by-mat multiplication
+}
+
+void rightMatMult(Matrix& result, const TernaryMatrix& mat1, const Matrix& mat2)
+{
+    if (mat1.NumCols() != mat2.NumRows()) {
+        throw std::runtime_error("TernaryMatrix::rightMatMult: M1*M2 dimension mismatch");
+    }
+    resize(result, mat1.NumRows(), mat2.NumCols());
+    Vector inTmp, outTmp;
+    resize(inTmp, mat2.NumRows());
+    for (size_t j=0; j<result.NumCols(); j++) {
+        for (size_t i=0; i<inTmp.length(); i++)  // copy column into a vector
+            inTmp[i] = mat2[i][j];
+        rightVecMult(outTmp, mat1, inTmp);       // mat-by-vec multiplication
+        for (size_t i=0; i<outTmp.length(); i++) // copy result into a column
+            result[i][j] = outTmp[i];
+    }
+}
+
+
+} // end of namespace REGEVENC
+
