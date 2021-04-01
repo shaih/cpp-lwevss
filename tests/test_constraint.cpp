@@ -36,11 +36,39 @@ static bool test_Constraints()
     // This supposed to yeild {[1->1, 3->10, 4->6, 5->3], 11}
 
     c2.addTerm(1, Scalar().setInteger(1)
-    ).addTerm(3, Scalar().setInteger(10)
     ).addTerm(4, Scalar().setInteger(6)
-    ).addTerm(5, Scalar().setInteger(3));
+    ).addTerm(3, Scalar().setInteger(4)
+    ).addTerm(5, Scalar().setInteger(3)
+    ).addTerm(3, Scalar().setInteger(6)); // added both 3->4 nad 3->6
     c2.equalsTo.setInteger(11);
     if (c1 != c2)
+        return false;
+    
+    PtxtVec xs{ // satisfying the contraint c1
+        {1,Scalar().setInteger(1)},
+        {3,Scalar().setInteger(1)},
+        {4,Scalar().setInteger(1)},
+        {5,Scalar().setInteger(-2)}
+    };
+    if (!checkConstraint(c1, xs))
+        return false;
+
+    PtxtVec ys{ // not satisfying the contraint c1
+        {1,Scalar().setInteger(2)},
+        {3,Scalar().setInteger(1)},
+        {4,Scalar().setInteger(2)},
+        {5,Scalar().setInteger(2)}
+    };
+    if (checkConstraint(c1, ys))
+        return false;
+
+    PtxtVec zs{ // index mismatch
+        {1,Scalar().setInteger(1)},
+        {3,Scalar().setInteger(1)},
+        {4,Scalar().setInteger(1)},
+        {6,Scalar().setInteger(-2)}
+    };
+    if (checkConstraint(c1, zs))
         return false;
 
     QuadConstraint q1;
@@ -88,6 +116,19 @@ static bool test_Constraints()
         std::cout << "q1="; q1.debugPrint();
         return false;
     }
+
+    q1.indexes.clear();
+    q1.addIdx(4).addIdx(1).addIdx(3).addIdx(5);
+    q1.equalsTo.setInteger(1); // <xs,ys> = <(1,1,1,-2),(2,1,2,2)> = 1
+
+    if (!checkConstraint(q1, xs, ys))
+        return false;
+    if (checkConstraint(q1, zs, ys))
+        return false;
+    q1.equalsTo.setInteger(2);
+    if (checkConstraint(q1, xs, ys))
+        return false;
+
     return true;
 }
 

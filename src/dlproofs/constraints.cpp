@@ -246,6 +246,38 @@ void LinConstraint::merge2(const std::vector<LinConstraint>& constraints, const 
 }
 #endif
 
+// Check sum_i constr[i]*witness[i]=cnstr.equalsTo, and that the indexes match
+bool checkConstraint(const LinConstraint& cnstr, const PtxtVec& witness)
+{
+    Scalar sum;
+    auto it1 = cnstr.terms.begin();
+    auto it2 = witness.begin();
+    while (it1 != cnstr.terms.end() && it2 != witness.end()) {
+        // if they both point to the same key, remove key from c1
+        if (it1->first != it2->first) // mismatched indexes
+            return false;
+        sum += it1->second * it2->second;
+        ++it1; ++it2;
+    }
+    return (sum == cnstr.equalsTo);
+}
+// Check that sum_i x[i]*y[i] = cnstr.equalsTo, and that the indexes match
+bool checkConstraint(const QuadConstraint& cnstr, const PtxtVec& xs, const PtxtVec& ys)
+{
+    Scalar sum;
+    auto it = cnstr.indexes.begin();
+    auto xit = xs.begin();
+    auto yit = ys.begin();
+    while (it != cnstr.indexes.end() && xit != xs.end() && yit != ys.end()) {
+        // if they both point to the same key, remove key from c1
+        if (*it != xit->first || *it != yit->first) // mismatched indexes
+            return false;
+        sum += xit->second * yit->second;
+        ++it; ++xit; ++yit;
+    }
+    return (sum == cnstr.equalsTo);
+}
+
 void LinConstraint::debugPrint() const {
     std::cout << "{[\n";
     for (auto& t : terms) {

@@ -168,5 +168,10 @@ inline int largestKey(const QuadConstraint& c) {
 // the new constraints. Returns the index of the new variable.
 size_t makeAlmostDisjoint(LinConstraint& lin, QuadConstraint& quad, const Scalar& s);
 
+// Debugging functions
+
+bool checkConstraint(const LinConstraint& cnstr, const PtxtVec& witness);
+bool checkConstraint(const QuadConstraint& cnstr, const PtxtVec& xs, const PtxtVec& ys);
+
 } /* end of namespace DLPROOFS */
 #endif // ifndef _CONSTRAINTS_HPP_

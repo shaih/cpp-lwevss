@@ -103,9 +103,20 @@ struct RegevEncProof {
     QuadConstraint r2r2;
 };
 
-// Ensure that the norm squared of v is at most bound^2
+// Ensure that the norm squared of v is at most bound^2. It *assumes*
+// that the norm squared is less than P/2
 bool boundedNorm(const Vector& v, const BigInt& bound) {
-    return true;
+    const BigInt Pover2 = GlobalKey::P() / 2;
+    BigIntVector vv;
+    conv(vv, v); // convert from sclars mod P to integers
+    // map integers to the range [-P/2,P/2]
+    for (size_t i=0; i<vv.length(); i++) {
+        if (vv[i] > Pover2)
+            vv[i] -= GlobalKey::P();
+    }
+    BigInt normSquared;
+    InnerProduct(normSquared, vv, vv);
+    return (normSquared <= bound);
 }
 
 // Find four integers a,b,c,d such that (v | a,b,c,d) has norm exactly bound

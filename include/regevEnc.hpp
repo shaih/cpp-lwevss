@@ -44,6 +44,7 @@ namespace REGEVENC {
 // in liue of "using X as Y", bring the relevant NTL types to this namespace
 typedef NTL::ZZ BigInt;
 typedef NTL::ZZ_p Scalar;
+typedef NTL::vec_ZZ BigIntVector;
 typedef NTL::vec_ZZ_p Vector;
 typedef NTL::mat_ZZ_p Matrix;
 inline const Scalar& zeroScalar() { return NTL::ZZ_p::zero(); }
