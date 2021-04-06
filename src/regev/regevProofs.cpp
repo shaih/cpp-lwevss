@@ -135,6 +135,7 @@ SVector& pad2exactNorm(SVector& v, const BigInt& bound) {
     return v;
 }
 
+#if 0
 RegevEncProof encProof(const GlobalKey& gk,
               const SVector& ptxt, SVector& ctxt1, SVector& ctxt2,
               const SVector& r1, PedersenContext& ped, MerlinRegev& mer) {
@@ -299,4 +300,5 @@ RegevEncProof encProof(const GlobalKey& gk,
 
     return pf;
 }
+#endif
 } // end of namespace REGEVENC

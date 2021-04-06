@@ -31,7 +31,7 @@ static bool verifyKeyPair(Matrix& crs, Matrix& sk, Matrix& noise, Matrix& pk) {
 
 static bool test_Regev() {
     GlobalKey gpk("testContext", /*k*/10, /*m*/100, /*n*/5, /*rho*/70);
-    ALGEBRA::SMatrix noise1;
+    ALGEBRA::EVector noise1;
     auto [sk1,pk1] = gpk.genKeys(&noise1);
     auto [sk2,pk2] = gpk.genKeys();
     size_t i1 = gpk.addPK(pk1);
@@ -46,7 +46,7 @@ static bool test_Regev() {
 
     auto ctxt = gpk.encrypt(ptxt);
 
-    ALGEBRA::SVector decNoise1;
+    ALGEBRA::Element decNoise1;
     auto ptxt1 = gpk.decrypt(sk1, i1, ctxt, &decNoise1);
     auto ptxt2 = gpk.decrypt(sk2, i2, ctxt);
 
