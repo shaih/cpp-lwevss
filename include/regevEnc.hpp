@@ -27,67 +27,8 @@
 #include <array>
 
 #include "algebra.hpp"
-using namespace ALGEBRA;
 
 namespace REGEVENC {
-
-#if 0
-/*******************************************************************/
-// NTL compatibility code to decouple the module form the underlying engine.
-// The module code relies on Matrix to have NumRows() and NumCols() methods
-// and on Vector to have a length() method, and on conv(toType,fromType) to
-// convert between types. But otherwise it shouldn't rely on much of NTL
-// beyond the compatibility functions below. (Of course it needs all the
-// uaual operator +, *, %, etc.)
-
-// in liue of "using X as Y", bring the relevant NTL types to this namespace
-typedef NTL::ZZ BigInt;
-typedef NTL::ZZ_p Scalar;
-typedef NTL::vec_ZZ BigIntVector;
-typedef NTL::vec_ZZ_p Vector;
-typedef NTL::mat_ZZ_p Matrix;
-inline const Scalar& zeroScalar() { return NTL::ZZ_p::zero(); }
-inline BigInt toBigInt(long n) {return NTL::conv<NTL::ZZ>(n);}
-inline void initRandomness(const std::string& st) {
-    NTL::SetSeed((unsigned char*)st.data(), st.length());
-}
-inline Scalar& randomizeScalar(Scalar& s) { NTL::random(s); return s; }
-inline Vector& resize(Vector& vec, size_t n) {vec.SetLength(n); return vec;}
-inline Matrix& resize(Matrix& mat, size_t n, size_t m) {
-    mat.SetDims(n,m); return mat;
-}
-inline long randBitsize(size_t n) {return NTL::RandomBits_long(n);}
-inline BigInt& randBitsize(BigInt& bi, size_t n) {
-    NTL::RandomBits(bi, n);
-    return bi;
-}
-inline size_t randomBit() {return randBitsize(1);}
-inline BigInt scalar2bigInt(const Scalar& s) {return NTL::conv<NTL::ZZ>(s);}
-inline void scalarBytes(unsigned char *buf, const Scalar& s, size_t bufSize){
-    NTL::BytesFromZZ(buf, NTL::rep(s), bufSize);
-}
-inline void scalarFromBytes(Scalar& s, const unsigned char *buf, size_t bufSize){
-    NTL::ZZ n;
-    NTL::ZZFromBytes(n, buf, bufSize);
-    NTL::conv(s,n);
-}
-inline Scalar innerProduct(const Vector& v1, const Vector& v2) {
-    Scalar s;
-    NTL::InnerProduct(s,v1,v2);
-    return s;
-}
-// returns the smallest ell such that 2^{ell} >= n
-inline size_t log2roundUp(const BigInt& n) {
-    if (NTL::IsZero(n)) return 0;
-    return NTL::NumBits(n-1);
-}
-inline Vector& push_back(Vector &v, const Scalar& s) {
-    v.append(s);
-    return v;
-}
-typedef NTL::RandomStreamPush PRGbackupClass; // backup/restore of PRG state
-#endif
-/*******************************************************************/
 
 // Some parameters are hard-wired, others are set at runtime
 constexpr int ell=2;     // how many secret keys per party
@@ -101,12 +42,12 @@ constexpr int skSize=60; // secret key entries in [+-(2^{skSize}-1)]
 // the CRS k-by-m matrix A over and the ell*enn-by-emm matrix B with enn
 // public keys (both over Z_P).
 class GlobalKey {
-    static BigInt Pmod;
-    static Scalar deltaScalar;  // approx P^{1/ell}
-    static Scalar initPdelta(); // a function to initialize P and delta
+    static ALGEBRA::BigInt Pmod;
+    static ALGEBRA::Scalar deltaScalar;  // approx P^{1/ell}
+    static ALGEBRA::Scalar initPdelta(); // a function to initialize P and delta
 public:
-    static const BigInt& P() { return Pmod; }
-    static const Scalar& delta() { return deltaScalar; }
+    static const ALGEBRA::BigInt& P() { return Pmod; }
+    static const ALGEBRA::Scalar& delta() { return deltaScalar; }
 
     std::string tag; // a string to tag this public key
     int kay; // dimension of LWE-secret
@@ -115,13 +56,13 @@ public:
     int rho; // encryption randomness in [+-(2^{rho}-1)]
 
     size_t nPks; // number of ell-row public keys that are stored in B
-    SMatrix A, B; // The matrix M = (A / B)
+    ALGEBRA::SMatrix A, B; // The matrix M = (A / B)
     unsigned char Ahash[32]; // fingerprint of the CRS A
     unsigned char Bhash[32]; // fingerprint of the key B
 
     GlobalKey() = delete;
     GlobalKey(const std::string t, int k, int m, int n, int r,
-              const SMatrix* crs=nullptr); // optional - a pre-selected CRS
+              const ALGEBRA::SMatrix* crs=nullptr); // optional - a pre-selected CRS
 
     const unsigned char* const crsHash() const {return Ahash;}
     const unsigned char* const keyHash() const {return Bhash;}
@@ -131,54 +72,54 @@ public:
     bool operator!=(const GlobalKey& other) const {return !(*this==other);}
 
     // The actual implementation of key-generation
-    void internalKeyGen(SMatrix& sk, SMatrix& pk, SMatrix& noise) const;
+    void internalKeyGen(ALGEBRA::SMatrix& sk, ALGEBRA::SMatrix& pk, ALGEBRA::SMatrix& noise) const;
 
     // generate a new key-pair, returns (sk,pk) and optionally also noise,
     // each an ell-by-something matrix
-    std::pair< SMatrix, SMatrix > genKeys(SMatrix* n=nullptr) const {
-        std::pair< SMatrix, SMatrix > ret;
+    std::pair< ALGEBRA::SMatrix, ALGEBRA::SMatrix > genKeys(ALGEBRA::SMatrix* n=nullptr) const {
+        std::pair< ALGEBRA::SMatrix, ALGEBRA::SMatrix > ret;
         if (n != nullptr)
             internalKeyGen(ret.first, ret.second, *n);
         else {
-            SMatrix noise;
+            ALGEBRA::SMatrix noise;
             internalKeyGen(ret.first, ret.second, noise);
         }
         return ret;
     }
 
     // Add the generated pk to the global key and return its index
-    size_t addPK(const SMatrix& pk);
+    size_t addPK(const ALGEBRA::SMatrix& pk);
 
     // The actual implementation of encryption, ctx1=CRS x r, ctxt2=PK x r
-    void internalEncrypt(SVector& ctxt1, SVector& ctxt2, const SVector& ptxt, SVector &r) const;
+    void internalEncrypt(ALGEBRA::SVector& ctxt1, ALGEBRA::SVector& ctxt2, const ALGEBRA::SVector& ptxt, ALGEBRA::SVector &r) const;
 
     // Encrypt a vector of plaintext scalars, return ct0,ct1 and optionally
     // also the randomness that was used in encryption
-    std::pair<SVector,SVector> encrypt(const SVector& ptxt, SVector* r=nullptr) const {
-        std::pair<SVector,SVector> ct;
+    std::pair<ALGEBRA::SVector,ALGEBRA::SVector> encrypt(const ALGEBRA::SVector& ptxt, ALGEBRA::SVector* r=nullptr) const {
+        std::pair<ALGEBRA::SVector,ALGEBRA::SVector> ct;
         if (r != nullptr)
             internalEncrypt(ct.first, ct.second, ptxt, *r);
         else {
-            SVector randomness;
+            ALGEBRA::SVector randomness;
             internalEncrypt(ct.first, ct.second, ptxt, randomness);
         }
         return ct;
     }
 
     // The actual implementation of decryption
-    void internalDecrypt(Scalar& ptxt, SVector& noise, const SMatrix& sk,
-                         int idx, const SVector& ct1, const SVector& ct2) const;
+    void internalDecrypt(ALGEBRA::Scalar& ptxt, ALGEBRA::SVector& noise,
+        const ALGEBRA::SMatrix& sk, int idx, const ALGEBRA::SVector& ct1, const ALGEBRA::SVector& ct2) const;
 
     // Decrypts a ciphertext, returning ptxt and optioanlly the noise.
     // This function gets the idx of this specific secret key in the
     // global key, and it decrypts the relevant part of the ciphertext.
-    Scalar decrypt(const SMatrix& sk, int idx,
-                const std::pair<SVector,SVector>& ctxt, SVector* n=nullptr) {
-        Scalar pt;
+    ALGEBRA::Scalar decrypt(const ALGEBRA::SMatrix& sk, int idx,
+                const std::pair<ALGEBRA::SVector,ALGEBRA::SVector>& ctxt, ALGEBRA::SVector* n=nullptr) {
+        ALGEBRA::Scalar pt;
         if (n != nullptr)
             internalDecrypt(pt, *n, sk, idx, ctxt.first, ctxt.second);
         else {
-            SVector noise;
+            ALGEBRA::SVector noise;
             internalDecrypt(pt, noise, sk, idx, ctxt.first, ctxt.second);
         }
         return pt;
@@ -188,13 +129,13 @@ public:
 // Select a -1/0/1 scalar with Pr[0]=1/2 and Pr[+-1]=1/4
 class ZeroOneScalar {
 public:
-    Scalar& randomize(Scalar& s) const {
-        long x = randBitsize(2); // two random bits
+    ALGEBRA::Scalar& randomize(ALGEBRA::Scalar& s) const {
+        long x = ALGEBRA::randBitsize(2); // two random bits
         conv(s, (x&1)-(x>>1));   // return their difference
         return s;
     }
-    Scalar randomize() const { 
-        Scalar s;
+    ALGEBRA::Scalar randomize() const { 
+        ALGEBRA::Scalar s;
         return randomize(s);
     }
 };
@@ -208,15 +149,15 @@ public:
     BoundedSizeScalar() = delete;
     explicit BoundedSizeScalar(int n): bitSize(n) {}
 
-    Scalar& randomize(Scalar& s) const {
-        BigInt zzs[2];
-        randBitsize(zzs[0], bitSize);
+    ALGEBRA::Scalar& randomize(ALGEBRA::Scalar& s) const {
+        ALGEBRA::BigInt zzs[2];
+        ALGEBRA::randBitsize(zzs[0], bitSize);
         zzs[1] = -zzs[0];
-        conv(s, zzs[randomBit()]); // convert to a Scalar mod p
+        conv(s, zzs[ALGEBRA::randomBit()]); // convert to a Scalar mod p
         return s;
     }
-    Scalar randomize() const { 
-        Scalar s;
+    ALGEBRA::Scalar randomize() const { 
+        ALGEBRA::Scalar s;
         return randomize(s);
     }
 };

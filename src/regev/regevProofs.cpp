@@ -32,6 +32,8 @@
 #include "pedersen.hpp"
 #include "bulletproof.hpp"
 
+using namespace ALGEBRA;
+
 namespace REGEVENC {
 using CRV25519::Point, DLPROOFS::PedersenContext,
     DLPROOFS::MerlinBPctx, DLPROOFS::LinConstraint, DLPROOFS::QuadConstraint;

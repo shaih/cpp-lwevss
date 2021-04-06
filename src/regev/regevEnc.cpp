@@ -26,6 +26,7 @@
 extern "C" {
     #include <sodium.h>
 }
+using namespace ALGEBRA;
 
 namespace REGEVENC {
 
