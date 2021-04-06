@@ -25,6 +25,7 @@
 #include <stdexcept>
 #include <cmath>
 
+#include "utils.hpp"
 #include "regevEnc.hpp"
 #include "ternaryMatrix.hpp"
 #include "merlin.hpp"
@@ -39,14 +40,14 @@ using CRV25519::Point, DLPROOFS::PedersenContext,
 constexpr int JLDIM = 256; // The target dimension of Johnson–Lindenstrauss
 
 struct MerlinRegev: public MerlinBPctx {
-    void processVector(const std::string& label, const Vector& v) {
+    void processVector(const std::string& label, const SVector& v) {
         unsigned char buf[32];
         for (size_t i=0; i<v.length(); i++) {
             scalarBytes(buf, v[i], sizeof(buf));
             merlin_transcript_commit_bytes(&mctx,nullptr,0,buf,sizeof(buf));
         }
     }
-    void processMatrix(const std::string& label, const Matrix& m) {
+    void processMatrix(const std::string& label, const SMatrix& m) {
         if (m.NumRows()<1)
             return;
         processVector(label, m[0]);
@@ -73,11 +74,11 @@ struct MerlinRegev: public MerlinBPctx {
     }
 };
 
-void conv(CRV25519::Scalar& to, const REGEVENC::Scalar& from) {
+void conv(CRV25519::Scalar& to, const ALGEBRA::Scalar& from) {
     scalarBytes(to.bytes, from, sizeof(to.bytes));
 }
 
-Point commit(const Vector& v, PedersenContext& ped, size_t genIdx) {
+Point commit(const SVector& v, PedersenContext& ped, size_t genIdx) {
     std::vector<Point> Gs(v.length());
     std::vector<CRV25519::Scalar> xes(v.length());
     for (size_t i=genIdx; i<Gs.size()+genIdx; i++) {
@@ -103,11 +104,10 @@ struct RegevEncProof {
     QuadConstraint r2r2;
 };
 
-// Ensure that the norm squared of v is at most bound^2. It *assumes*
-// that the norm squared is less than P/2
-bool boundedNorm(const Vector& v, const BigInt& bound) {
+// Compute the norm-squared of v as a bigInt (not modular reduction)
+BigInt normSquaredBigInt(const SVector& v) {
     const BigInt Pover2 = GlobalKey::P() / 2;
-    BigIntVector vv;
+    BIVector vv;
     conv(vv, v); // convert from sclars mod P to integers
     // map integers to the range [-P/2,P/2]
     for (size_t i=0; i<vv.length(); i++) {
@@ -116,17 +116,26 @@ bool boundedNorm(const Vector& v, const BigInt& bound) {
     }
     BigInt normSquared;
     InnerProduct(normSquared, vv, vv);
-    return (normSquared <= bound);
+    return normSquared;
 }
 
-// Find four integers a,b,c,d such that (v | a,b,c,d) has norm exactly bound
-Vector& pad2exactNorm(Vector& v, const BigInt& bound) {
+// Add to v four integers a,b,c,d such that the result
+// (v | a,b,c,d) has norm exactly equal to the bound
+SVector& pad2exactNorm(SVector& v, const BigInt& bound) {
+    BigInt delta = bound*bound - normSquaredBigInt(v);
+    auto fourSqrt = ALGEBRA::decompose4(delta);
+    // returns four BigInts s.t., a^2+b^2+c^2+d^2 = delta
+
+    size_t n = v.length();
+    resize(v, n+4);
+    for (size_t i=0; i<4; i++)
+        conv(v[n+i], fourSqrt[i]); // convert to scalars modulo P
     return v;
 }
 
 RegevEncProof encProof(const GlobalKey& gk,
-              const Vector& ptxt, Vector& ctxt1, Vector& ctxt2,
-              const Vector& r1, PedersenContext& ped, MerlinRegev& mer) {
+              const SVector& ptxt, SVector& ctxt1, SVector& ctxt2,
+              const SVector& r1, PedersenContext& ped, MerlinRegev& mer) {
     RegevEncProof pf;
     // Compute commitment wrt generators G{n+1}...G{n+m}
     size_t genIdx = ptxt.length() +1;
@@ -138,7 +147,7 @@ RegevEncProof encProof(const GlobalKey& gk,
     BigInt bound = (toBigInt(1) << (gk.rho+2)) // ceil( 2^{rho+2}sqrt(m) )
                     * (long) std::ceil(std::sqrt((double)gk.emm));
     TernaryMatrix R1;
-    Vector r2;    
+    SVector r2;    
 #ifdef DEBUGGING
     for (int ii=0; i<31; i++) { // don't try more than 30 times
         if (ii==30)
@@ -146,15 +155,16 @@ RegevEncProof encProof(const GlobalKey& gk,
 #else
     while (true) {
 #endif
-        // fresh random commitment wrt generators g1...g_n
+        // fresh random commitment wrt generators G1...Gn
         pf.ptCommit = {1, commit(ptxt, ped, 1)};
-        MerlinRegev reserCtx = mer;
-        reserCtx.processPoint("RegevEncPtxt", pf.ptCommit.c);
+        MerlinRegev resetCtx = mer;
+        resetCtx.processPoint("RegevEncPtxt", pf.ptCommit.c);
         // Generate a challenge m-by-256 ternary matrix
-        reserCtx.newTernaryMatrix("RegevEncR1", R1, gk.emm, JLDIM);
+        resetCtx.newTernaryMatrix("RegevEncR1", R1, gk.emm, JLDIM);
         r2 = r1 * R1;
-        if (boundedNorm(r2, bound)) { // check that |r|^2 < 2^{2rho+4}*m
-            mer = reserCtx;
+        // check that |r|^2 < 2^{2rho+4}*m
+        if (normSquaredBigInt(r2) <= bound*bound) {
+            mer = resetCtx;
             break;
         }
     }
@@ -177,13 +187,14 @@ RegevEncProof encProof(const GlobalKey& gk,
     // from [+-2^{119}]^128. We check that |u|_{infty} < beta/128 and
     // that |z|_{infty} < beta.
     BigInt bound2 = (toBigInt(1) << 126) / 129; // 2^119 * 128/129
+    bound2 *= bound2;                           // squared
     BoundedSizeScalar rzr(119);  // for choosing elements in [+-(2^119-1)]
 
     // starting index for generators for committing to the masking vector y
     genIdx = ptxt.length() +r1.length() +JLDIM +1;
 
     TernaryMatrix R2;
-    Vector u,y,z;
+    SVector u,y,z;
     resize(y,128);
 
 #ifdef DEBUGGING
@@ -206,7 +217,8 @@ RegevEncProof encProof(const GlobalKey& gk,
         u = r2 * R1;
         z = u + y;
         // check that u,z are small enough
-        if (boundedNorm(u, bound2/128) && boundedNorm(u, bound2)) {
+        if (normSquaredBigInt(u) <= (bound2>>14)  // |u| <= beta/128
+            &&  normSquaredBigInt(z) <= bound2) { // |z| <= beta
             mer = reserCtx;
             break;
         }
@@ -223,7 +235,7 @@ RegevEncProof encProof(const GlobalKey& gk,
     // Derive a random challenge x, the linear combination of the linear
     // constraints will be (1,x,x^2,...)
     Scalar x = mer.newScalar("RegevEncX");
-    Vector vA, vB, vR1, vR2; 
+    SVector vA, vB, vR1, vR2; 
 
     // Build the constraint for (M|G) * (r1|ptxt)^t = ctxt
     resize(vA, gk.kay); // to multiply by the CRS
@@ -235,7 +247,7 @@ RegevEncProof encProof(const GlobalKey& gk,
     for (size_t i=1; i<vB.length(); i++) vB[i] = vB[i-1]*x;
 
     // uM = (vA|vB)*(A/B)
-    Vector uM = vA * gk.A + vA * gk.B;
+    SVector uM = vA * gk.A + vA * gk.B;
 
     // The first linear constraint is 
     // \sum (vB[2i]+Delta*vB[2i+1]) * pt[i] + \sum uM[i] * r1[i]
@@ -255,7 +267,7 @@ RegevEncProof encProof(const GlobalKey& gk,
     resize(vR1, R1.NumCols()); // to multiply by R1
     vR1[0] = vB[vB.length()-1] * x;
     for (size_t i=1; i<vR1.length(); i++) vR1[i] = vR1[i-1]*x;
-    Vector uR1 = R1 * vR1;
+    SVector uR1 = R1 * vR1;
 
     baseIdx = pf.r1Commit.Gidx;
     for (size_t i=0; i<r1.length(); i++) {
@@ -271,7 +283,7 @@ RegevEncProof encProof(const GlobalKey& gk,
     resize(vR2, R2.NumCols()); // to multiply by R2
     vR2[0] = vR1[vR1.length()-1] * x;
     for (size_t i=1; i<vR2.length(); i++) vR2[i] = vR2[i-1]*x;
-    Vector uR2 = R2 * vR2;
+    SVector uR2 = R2 * vR2;
 
     baseIdx = pf.r2Commit.Gidx;
     for (size_t i=0; i<r2.length(); i++) {

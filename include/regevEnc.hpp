@@ -26,13 +26,12 @@
 #include <vector>
 #include <array>
 
-#include <NTL/ZZ.h>
-#include <NTL/ZZ_p.h>
-#include <NTL/vector.h>
-#include <NTL/mat_ZZ_p.h>
+#include "algebra.hpp"
+using namespace ALGEBRA;
 
 namespace REGEVENC {
 
+#if 0
 /*******************************************************************/
 // NTL compatibility code to decouple the module form the underlying engine.
 // The module code relies on Matrix to have NumRows() and NumCols() methods
@@ -77,16 +76,17 @@ inline Scalar innerProduct(const Vector& v1, const Vector& v2) {
     NTL::InnerProduct(s,v1,v2);
     return s;
 }
-inline Scalar normSquared(const Vector& v) {
-    return innerProduct(v,v);
-}
 // returns the smallest ell such that 2^{ell} >= n
 inline size_t log2roundUp(const BigInt& n) {
     if (NTL::IsZero(n)) return 0;
     return NTL::NumBits(n-1);
 }
-
+inline Vector& push_back(Vector &v, const Scalar& s) {
+    v.append(s);
+    return v;
+}
 typedef NTL::RandomStreamPush PRGbackupClass; // backup/restore of PRG state
+#endif
 /*******************************************************************/
 
 // Some parameters are hard-wired, others are set at runtime
@@ -115,13 +115,13 @@ public:
     int rho; // encryption randomness in [+-(2^{rho}-1)]
 
     size_t nPks; // number of ell-row public keys that are stored in B
-    Matrix A, B; // The matrix M = (A / B)
+    SMatrix A, B; // The matrix M = (A / B)
     unsigned char Ahash[32]; // fingerprint of the CRS A
     unsigned char Bhash[32]; // fingerprint of the key B
 
     GlobalKey() = delete;
     GlobalKey(const std::string t, int k, int m, int n, int r,
-              const Matrix* crs=nullptr); // optional - a pre-selected CRS
+              const SMatrix* crs=nullptr); // optional - a pre-selected CRS
 
     const unsigned char* const crsHash() const {return Ahash;}
     const unsigned char* const keyHash() const {return Bhash;}
@@ -131,54 +131,54 @@ public:
     bool operator!=(const GlobalKey& other) const {return !(*this==other);}
 
     // The actual implementation of key-generation
-    void internalKeyGen(Matrix& sk, Matrix& pk, Matrix& noise) const;
+    void internalKeyGen(SMatrix& sk, SMatrix& pk, SMatrix& noise) const;
 
     // generate a new key-pair, returns (sk,pk) and optionally also noise,
     // each an ell-by-something matrix
-    std::pair< Matrix, Matrix > genKeys(Matrix* n=nullptr) const {
-        std::pair< Matrix, Matrix > ret;
+    std::pair< SMatrix, SMatrix > genKeys(SMatrix* n=nullptr) const {
+        std::pair< SMatrix, SMatrix > ret;
         if (n != nullptr)
             internalKeyGen(ret.first, ret.second, *n);
         else {
-            Matrix noise;
+            SMatrix noise;
             internalKeyGen(ret.first, ret.second, noise);
         }
         return ret;
     }
 
     // Add the generated pk to the global key and return its index
-    size_t addPK(const Matrix& pk);
+    size_t addPK(const SMatrix& pk);
 
     // The actual implementation of encryption, ctx1=CRS x r, ctxt2=PK x r
-    void internalEncrypt(Vector& ctxt1, Vector& ctxt2, const Vector& ptxt, Vector &r) const;
+    void internalEncrypt(SVector& ctxt1, SVector& ctxt2, const SVector& ptxt, SVector &r) const;
 
     // Encrypt a vector of plaintext scalars, return ct0,ct1 and optionally
     // also the randomness that was used in encryption
-    std::pair<Vector,Vector> encrypt(const Vector& ptxt, Vector* r=nullptr) const {
-        std::pair<Vector,Vector> ct;
+    std::pair<SVector,SVector> encrypt(const SVector& ptxt, SVector* r=nullptr) const {
+        std::pair<SVector,SVector> ct;
         if (r != nullptr)
             internalEncrypt(ct.first, ct.second, ptxt, *r);
         else {
-            Vector randomness;
+            SVector randomness;
             internalEncrypt(ct.first, ct.second, ptxt, randomness);
         }
         return ct;
     }
 
     // The actual implementation of decryption
-    void internalDecrypt(Scalar& ptxt, Vector& noise, const Matrix& sk,
-                         int idx, const Vector& ct1, const Vector& ct2) const;
+    void internalDecrypt(Scalar& ptxt, SVector& noise, const SMatrix& sk,
+                         int idx, const SVector& ct1, const SVector& ct2) const;
 
     // Decrypts a ciphertext, returning ptxt and optioanlly the noise.
     // This function gets the idx of this specific secret key in the
     // global key, and it decrypts the relevant part of the ciphertext.
-    Scalar decrypt(const Matrix& sk, int idx,
-                const std::pair<Vector,Vector>& ctxt, Vector* n=nullptr) {
+    Scalar decrypt(const SMatrix& sk, int idx,
+                const std::pair<SVector,SVector>& ctxt, SVector* n=nullptr) {
         Scalar pt;
         if (n != nullptr)
             internalDecrypt(pt, *n, sk, idx, ctxt.first, ctxt.second);
         else {
-            Vector noise;
+            SVector noise;
             internalDecrypt(pt, noise, sk, idx, ctxt.first, ctxt.second);
         }
         return pt;

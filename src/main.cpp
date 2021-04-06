@@ -41,7 +41,7 @@ int main(int, char**) {
     GlobalKey gpk("testContext", /*k*/10, /*m*/100, /*n*/5, /*rho*/70);
  
     //auto start = high_resolution_clock::now();
-    Matrix noise1;
+    ALGEBRA::SMatrix noise1;
     auto [sk1,pk1] = gpk.genKeys(&noise1);
     auto [sk2,pk2] = gpk.genKeys();
     size_t i1 = gpk.addPK(pk1);
@@ -52,19 +52,19 @@ int main(int, char**) {
     //std::cout <<"Time for "<<gpk.enn<<" keygen: "<<duration.count()<< " seconds" << std::endl;
 
     // encryption
-    REGEVENC::Vector ptxt(NTL::INIT_SIZE, gpk.enn);
+    ALGEBRA::SVector ptxt(NTL::INIT_SIZE, gpk.enn);
     for (auto& p: ptxt)
         NTL::random(p);
 
     //start = high_resolution_clock::now();
-    Vector r;
+    ALGEBRA::SVector r;
     auto ctxt = gpk.encrypt(ptxt, &r);
     //duration = duration_cast<seconds>(high_resolution_clock::now() - start);
     //std::cout << "Time for encryption of "
     //    <<gpk.enn<<" ptxts: "<<duration.count()<< " seconds" << std::endl;
 
     //start = high_resolution_clock::now();
-    Vector decNoise1;
+    ALGEBRA::SVector decNoise1;
     auto ptxt1 = gpk.decrypt(sk1, i1, ctxt, &decNoise1);
     auto ptxt2 = gpk.decrypt(sk2, i2, ctxt);
     //std::cout << "Time for 2 decryptions: "

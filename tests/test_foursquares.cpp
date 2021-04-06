@@ -2,7 +2,7 @@
 #include "utils.hpp"
 #include "tests.hpp" // define strings LWEVSS_TESTS::passed and LWEVSS_TESTS::failed
 
-using namespace UTILS;
+using namespace ALGEBRA;
 
 bool test_decomposeProbablePrime()
 {

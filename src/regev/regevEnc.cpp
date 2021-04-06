@@ -42,7 +42,7 @@ Scalar GlobalKey::initPdelta() { // Implementation is NTL-specific
     // will be assigned to GlobalKey::deltaScalar
 }
 
-GlobalKey::GlobalKey(const std::string t, int k, int m, int n, int r, const Matrix* crs):
+GlobalKey::GlobalKey(const std::string t, int k, int m, int n, int r, const SMatrix* crs):
         tag(t),kay(k),emm(m),enn(n),rho(r),nPks(0) {
     if (kay<=0 || emm<=0 || enn<=0 || rho<=0) {
         throw std::runtime_error("GlobalKey with invalid parameters");
@@ -83,7 +83,7 @@ void GlobalKey::setKeyHash() {
 }
 
     // Add the generated pk to the global key and return its index
-size_t GlobalKey::addPK(const Matrix& pk) { // This function is NOT thread-safe
+size_t GlobalKey::addPK(const SMatrix& pk) { // This function is NOT thread-safe
     if (pk.NumRows() != ell || pk.NumCols() != emm) {
         throw std::runtime_error("Public keys must be "+std::to_string(ell)
             +"-by-"+std::to_string(emm)+" matrices");
@@ -102,7 +102,7 @@ size_t GlobalKey::addPK(const Matrix& pk) { // This function is NOT thread-safe
     return idx;
 }
 
-void GlobalKey::internalKeyGen(Matrix& sk, Matrix& pk, Matrix& noise) const
+void GlobalKey::internalKeyGen(SMatrix& sk, SMatrix& pk, SMatrix& noise) const
 {
     // allocate space for the different components
     resize(sk,ell,kay);
@@ -123,8 +123,8 @@ void GlobalKey::internalKeyGen(Matrix& sk, Matrix& pk, Matrix& noise) const
 }
 
 // Encrypt a vector of plaintext scalars
-void GlobalKey::internalEncrypt(Vector& ctxt1, Vector& ctxt2,
-                                const Vector& ptxt, Vector& arr) const{
+void GlobalKey::internalEncrypt(SVector& ctxt1, SVector& ctxt2,
+                                const SVector& ptxt, SVector& arr) const{
     if (A.NumRows() != kay || A.NumCols() != emm
         || B.NumRows() != ell*enn || B.NumCols() != emm) { // sanity check
         throw std::runtime_error("mal-formed public key, expected "+std::to_string(kay)
@@ -163,8 +163,8 @@ void GlobalKey::internalEncrypt(Vector& ctxt1, Vector& ctxt2,
 // the idx of this specific secret key in the global one, and then it
 // decrypts the relevant part of the ciphertext.
 void
-GlobalKey::internalDecrypt(Scalar& ptxt, Vector& noise, const Matrix& sk,
-                          int idx, const Vector& ct1, const Vector& ct2) const
+GlobalKey::internalDecrypt(Scalar& ptxt, SVector& noise, const SMatrix& sk,
+                          int idx, const SVector& ct1, const SVector& ct2) const
 {
     static const BigInt deltaZZ = scalar2bigInt(delta());
 
@@ -183,7 +183,7 @@ GlobalKey::internalDecrypt(Scalar& ptxt, Vector& noise, const Matrix& sk,
 
     // Set the noisy plaintext as SK x ct1 - relevantEntriesOf(ct2)
     // = Sk A r -(B r + x*g) = (SK A -(Sk A + E))r -x*g = -Er -x*g
-    Vector noisyPtxt = sk * ct1;
+    SVector noisyPtxt = sk * ct1;
     for (int i=0; i<ell; i++)
         noisyPtxt.at(i) -= ct2.at(i + ell*idx);
 

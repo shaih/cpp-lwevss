@@ -23,17 +23,17 @@
  * ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
  * OTHER DEALINGS IN THE SOFTWARE.
  **/
-#include <NTL/ZZ.h>
+#include "algebra.hpp"
 
-namespace UTILS {
-typedef std::array<NTL::ZZ, 2> TwoSqrts;
-typedef std::array<NTL::ZZ, 4> FourSqrts;
+namespace ALGEBRA {
+typedef std::array<BigInt, 2> TwoSqrts;
+typedef std::array<BigInt, 4> FourSqrts;
 
 // Decomposes a prime, p=1 mod 4, to a sum of two squares
-TwoSqrts decomposeProbablePrime(NTL::ZZ p);
+TwoSqrts decomposeProbablePrime(BigInt p);
 
 // Decomposes a nonegative integer into a sum of four squares
-FourSqrts decompose4(NTL::ZZ n);
+FourSqrts decompose4(BigInt n);
 
 } // end of namespace UTILS
 #endif // ifndef _UTILS_HPP_

@@ -27,15 +27,15 @@
 #include <stdexcept>
 #include "regevEnc.hpp" // brings in NTL compatibility
 
-namespace REGEVENC {
+namespace ALGEBRA {
 
 // Each row of the n-by-m matrix M over 0/+-1 is represented by a binary
 // vector of length 2m. Every two bits x,y in this vector represent a
 // trenary number with (00)-> 0, (01)-> 1, (10)-> -1.
 //
 // This class offers a rather limited functionality, all you can do
-// is access individual elements ot multiply by RegevEnc::Vector or
-// RegevEnc::Matrix
+// is access individual elements ot multiply by ALGEBRA::SVector or
+// ALGEBRA::SMatrix
 
 struct TernaryMatrix {
     struct TrenaryRow { // a single -1/0/1 row
@@ -104,28 +104,28 @@ inline TernaryMatrix randomTernaryMatrix(size_t n, size_t m) { // factory
     return tMat.random(n,m);
 }
 
-void leftVecMult(Vector& result, const Vector& v, const TernaryMatrix& mat);
-void rightVecMult(Vector& result, const TernaryMatrix& mat, const Vector& v);
-void leftMatMult(Matrix& result, const Matrix& mat1, const TernaryMatrix& mat2);
-void rightMatMult(Matrix& result, const TernaryMatrix& mat1, const Matrix& mat2);
+void leftVecMult(SVector& result, const SVector& v, const TernaryMatrix& mat);
+void rightVecMult(SVector& result, const TernaryMatrix& mat, const SVector& v);
+void leftMatMult(SMatrix& result, const SMatrix& mat1, const TernaryMatrix& mat2);
+void rightMatMult(SMatrix& result, const TernaryMatrix& mat1, const SMatrix& mat2);
 
-inline Vector operator*(const Vector& v, const TernaryMatrix& mat) {
-    Vector res;
+inline SVector operator*(const SVector& v, const TernaryMatrix& mat) {
+    SVector res;
     leftVecMult(res, v, mat);
     return res;
 }
-inline Vector operator*(const TernaryMatrix& mat, const Vector& v) {
-    Vector res;
+inline SVector operator*(const TernaryMatrix& mat, const SVector& v) {
+    SVector res;
     rightVecMult(res, mat, v);
     return res;
 }
-inline Matrix operator*(const Matrix& mat1, const TernaryMatrix& mat2) {
-    Matrix res;
+inline SMatrix operator*(const SMatrix& mat1, const TernaryMatrix& mat2) {
+    SMatrix res;
     leftMatMult(res, mat1, mat2);
     return res;
 }
-inline Matrix operator*(const TernaryMatrix& mat1, const Matrix& mat2) {
-    Matrix res;
+inline SMatrix operator*(const TernaryMatrix& mat1, const SMatrix& mat2) {
+    SMatrix res;
     rightMatMult(res, mat1, mat2);
     return res;
 }

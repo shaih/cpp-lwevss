@@ -36,7 +36,7 @@
 // This implementation is based on Peter Schorn's Python code from
 // https://schorn.ch/lagrange.html
 
-namespace UTILS {
+namespace ALGEBRA {
 
 // n = 10080 = 2^5 *3^2 *5 *7 is a "magic number", there are exactly 336
 // squares mod n. This is the smallest rate of squares for any n < 15840

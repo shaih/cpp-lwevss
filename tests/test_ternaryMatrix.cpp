@@ -2,7 +2,7 @@
 #include "ternaryMatrix.hpp"
 #include "tests.hpp" // define strings LWEVSS_TESTS::passed and LWEVSS_TESTS::failed
 
-using namespace REGEVENC;
+using namespace ALGEBRA;
 bool basicTests() {
     // {12,f7,59,f6} = [00 01 00 10   11 11 01 11   01 01 10 01   11 11 01 10]
     // The bits that are actually stored should be 
@@ -78,8 +78,8 @@ bool basicTests() {
 
 
 bool testMatMul() {
-    Vector v1, v2;
-    Matrix M;
+    SVector v1, v2;
+    SMatrix M;
     TernaryMatrix T1, T2;
 
     // resize and fill with random entries
@@ -90,7 +90,7 @@ bool testMatMul() {
     T2.random(6,3);
 
     // Copy T1,T2 to standard matrices
-    Matrix MT1, MT2;
+    SMatrix MT1, MT2;
     resize(MT1, T1.NumRows(), T1.NumCols()); 
     for (auto i=0; i<T1.NumRows(); i++) for (auto j=0; j<T1.NumCols(); j++)
         conv(MT1[i][j], T1[i][j]);
@@ -99,22 +99,22 @@ bool testMatMul() {
     for (auto i=0; i<T2.NumRows(); i++) for (auto j=0; j<T2.NumCols(); j++)
         conv(MT2[i][j], T2[i][j]);
 
-    Vector vRes1 = T1 * v1;
+    SVector vRes1 = T1 * v1;
     if (vRes1 != MT1 * v1) {
         std::cout << "T1 * v1 failed\n";
         return false;
     }
-    Vector vRes2 = v2 * T2;
+    SVector vRes2 = v2 * T2;
     if (vRes2 != v2 * MT2) {
         std::cout << "v2 * T2 failed\n";
         return false;
     }
-    Matrix MRes1 = M * T1;
+    SMatrix MRes1 = M * T1;
     if (MRes1 != M * MT1) {
         std::cout << "M * T1 failed\n";
         return false;
     }
-    Matrix MRes2 = T2 * M;
+    SMatrix MRes2 = T2 * M;
     if (MRes2 != MT2 * M) {
         std::cout << "T2 * M failed\n";
         return false;
