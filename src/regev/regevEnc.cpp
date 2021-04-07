@@ -66,9 +66,9 @@ Element GlobalKey::initPdeltaG() { // Implementation is NTL-specific
     return g; // will be assigned to GlobalKey::gElement
 }
 
-GlobalKey::GlobalKey(const std::string t, int k, int m, int n, int r, const EMatrix* crs):
-        tag(t),kay(k),emm(m),enn(n),rho(r),nPks(0) {
-    if (kay<=0 || emm<=0 || enn<=0 || rho<=0) {
+GlobalKey::GlobalKey(const std::string t, int k, int m, int n, const EMatrix* crs):
+        tag(t),kay(k),emm(m),enn(n),nPks(0) {
+    if (kay<=0 || emm<=0 || enn<=0) {
         throw std::runtime_error("GlobalKey with invalid parameters");
     }
     resize(A,k,m);
@@ -146,7 +146,7 @@ void GlobalKey::internalKeyGen(EVector& sk, EVector& pk, EVector& noise) const
 
 // Encrypt a vector of plaintext scalars
 void GlobalKey::internalEncrypt(EVector& ctxt1, EVector& ctxt2,
-                                const SVector& ptxt, EVector& arr) const{
+                        const SVector& ptxt, EVector& arr, EVector& e) const {
     if (A.NumRows() != kay || A.NumCols() != emm
         || B.NumRows() != enn || B.NumCols() != emm) { // sanity check
         throw std::runtime_error("mal-formed public key, expected "+std::to_string(kay)
@@ -170,9 +170,17 @@ void GlobalKey::internalEncrypt(EVector& ctxt1, EVector& ctxt2,
     ctxt1 = A * arr;
     ctxt2 = B * arr;
 
-    // add g * ptxt to the bottom n rows
-    for (size_t i=0; i<enn; i++)
-        ctxt2[i] += g() * ptxt[i];
+    // Add noise, and also g * ptxt to the bottom n rows
+    resize(e, kay+enn);
+    BoundedSizeElement noise1(sigmaEnc1),  noise2(sigmaEnc2);
+    for (size_t i=0; i<kay; i++) {
+        noise1.randomize(e[i]);
+        ctxt1[i] += e[i];
+    }
+    for (size_t i=0; i<enn; i++) {
+        noise2.randomize(e[kay+i]);
+        ctxt2[i] += g()*ptxt[i] + e[kay+i];
+    }
 }
 
 // Decrypts a ciphertext, returning ptxt and noise. This function gets

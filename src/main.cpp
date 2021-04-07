@@ -38,7 +38,7 @@ int main(int, char**) {
     std::cout << "- Found NTL version "<<NTL_VERSION <<std::endl;
     // std::cout << "- Found Sodium version "<<SODIUM_VERSION_STRING<<std::endl;
 
-    GlobalKey gpk("testContext", /*k*/10, /*m*/8, /*n*/5, /*rho*/27);
+    GlobalKey gpk("testContext", /*k*/10, /*m*/8, /*n*/5);
  
     //auto start = high_resolution_clock::now();
     ALGEBRA::EVector noise1;
@@ -57,8 +57,8 @@ int main(int, char**) {
         NTL::random(p);
 
     //start = high_resolution_clock::now();
-    ALGEBRA::EVector r;
-    auto ctxt = gpk.encrypt(ptxt, &r);
+    ALGEBRA::EVector r, e;
+    auto ctxt = gpk.encrypt(ptxt, r, e);
     //duration = duration_cast<seconds>(high_resolution_clock::now() - start);
     //std::cout << "Time for encryption of "
     //    <<gpk.enn<<" ptxts: "<<duration.count()<< " seconds" << std::endl;
