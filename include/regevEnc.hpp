@@ -23,6 +23,7 @@
  * ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
  * OTHER DEALINGS IN THE SOFTWARE.
  **/
+#include <iostream>
 #include <vector>
 #include <array>
 
@@ -31,9 +32,10 @@
 namespace REGEVENC {
 
 // Some parameters are hard-wired, others are set at runtime
-constexpr int ell=2;     // how many secret keys per party
-constexpr int sigma=2;   // keygen noise in [+-(2^{sigma}-1)]
-constexpr int skSize=60; // secret key entries in [+-(2^{skSize}-1)]
+constexpr int ell=4;      // redundancy parameter, # dimensions per party
+constexpr int sigmaKG=2;  // keygen noise in [+-(2^{sigmaKG}-1)]
+constexpr int sigmaEnc=2; // encryption noise in [+-(2^{sigmaEnc}-1)]
+constexpr int skSize=60;  // secret key entries in [+-(2^{skSize}-1)]
     // We use skSize=60 for no reason at all, it might as well be drawn
     // from thenoise distribution. It needs to be somewhat small, say
     // less than sqrt(P), to provide elbow-room for the proofs.
@@ -43,12 +45,14 @@ constexpr int skSize=60; // secret key entries in [+-(2^{skSize}-1)]
 // public keys (both over Z_P).
 class GlobalKey {
     static ALGEBRA::BigInt Pmod;
-    static ALGEBRA::Scalar deltaScalar;// approx P^{1/ell}
-    static ALGEBRA::Element gElement;  // (1,Delta,...,Delta^{ell-1})
+    static ALGEBRA::Scalar deltaScalar; // approx P^{1/ell}
+    static ALGEBRA::BigInt delta2ellm1; // Delta^{ell-1}
+    static ALGEBRA::Element gElement;   // (1,Delta,...,Delta^{ell-1})
     static ALGEBRA::Element initPdeltaG(); // a function to initialize P,delta,g
 public:
     static const ALGEBRA::BigInt& P() { return Pmod; }
     static const ALGEBRA::Scalar& delta() { return deltaScalar; }
+    static const ALGEBRA::BigInt& delta2ellMinus1() { return delta2ellm1; }
     static const ALGEBRA::Element& g() { return gElement; }
 
     std::string tag; // a string to tag this public key
@@ -203,5 +207,6 @@ public:
         return randomize(e);
     }
 };
+
 } // end of namespace REGEVENC
 #endif // ifndef _REGEVENC_HPP_

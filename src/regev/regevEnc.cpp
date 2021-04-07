@@ -32,24 +32,31 @@ using namespace ALGEBRA;
 namespace REGEVENC {
 
 BigInt GlobalKey::Pmod;
-Scalar GlobalKey::deltaScalar;
+Scalar GlobalKey::deltaScalar; // Delta = P^{1/ell} as a scalar
+BigInt GlobalKey::delta2ellm1; // Delta^{ell-1} as a bigInt
 Element GlobalKey::gElement = GlobalKey::initPdeltaG(); // force to run initPdeltaG
 
 Element GlobalKey::initPdeltaG() { // Implementation is NTL-specific
-    // Initizlie the NTL global modulus to 2^{252} + 27742...493
-    GlobalKey::Pmod = (NTL::conv<NTL::ZZ>(1L)<<252)
+    // Initizlie the NTL global modulus to 2^{252} +27742...493
+    GlobalKey::Pmod = (toBigInt(1)<<252)
                     + NTL::conv<NTL::ZZ>("27742317777372353535851937790883648493");
     NTL::ZZ_p::init(GlobalKey::Pmod);
+
+    // Initizlie the NTL global polynomial modulus to F(X) = X^ell +1
     NTL::ZZ_pX Phi_ell_X;
     NTL::SetCoeff(Phi_ell_X, ell); // x^ell +1
     NTL::SetCoeff(Phi_ell_X, 0);
     NTL::ZZ_pE::init(Phi_ell_X);
 
-    // Initialize delta = 2^{126} as a ZZ_p
-    GlobalKey::deltaScalar = NTL::to_ZZ_p(NTL::conv<NTL::ZZ>(1L)<<126);
+    // Initialize delta
+    BigInt delta = toBigInt(1) << (252/ell);     // approx P^{1/ell}
+    conv(GlobalKey::deltaScalar, delta );        // convert to a scalar mod P
+    power(GlobalKey::delta2ellm1, delta, ell-1); // Delta^{ell-1}
 
+    // Initialize the element g = (Delta^{ell-1},...,Delta,1)
     NTL::ZZ_pX gx;
-    Scalar delta2i = NTL::to_ZZ_p(1);
+    Scalar delta2i;
+    conv(delta2i, 1L);
     for (size_t i=0; i<ell; i++) {
         NTL::SetCoeff(gx, i, delta2i);
         delta2i *= GlobalKey::deltaScalar;
@@ -80,7 +87,7 @@ GlobalKey::GlobalKey(const std::string t, int k, int m, int n, int r, const EMat
         if (crs != nullptr) // use provided CRS
             A[i][j] = (*crs)[i][j];
         else
-            ALGEBRA::randomizeElement(A[i][j]); // select a new random scalar
+            ALGEBRA::randomizeElement(A[i][j]); // select a new random element
         elementBytes(buf, A[i][j], sizeof(buf));
         crypto_generichash_update(&state, buf, sizeof(buf));
     }
@@ -128,12 +135,13 @@ void GlobalKey::internalKeyGen(EVector& sk, EVector& pk, EVector& noise) const
         rSK.randomize(sk[i]);
     }
 
-    // The error vector entries are chosen from [+-3]
-    BoundedSizeElement rNoise(sigma);
+    // The error vector entries are chosen from [+-2^{sigmaKG}]
+    BoundedSizeElement rNoise(sigmaKG);
     for (int i=0; i<noise.length(); i++) {
         rNoise.randomize(noise[i]);
     }
     pk = sk * A + noise;
+    //printEvec(std::cout<<"keygen noise = ",noise) << std::endl;
 }
 
 // Encrypt a vector of plaintext scalars
@@ -152,11 +160,11 @@ void GlobalKey::internalEncrypt(EVector& ctxt1, EVector& ctxt2,
             + std::to_string(ptxt.length())+" scalars");
     }
 
-    resize(arr,emm);       // the dimension-m encryption-randomness vector
-    BoundedSizeElement rEnc(rho);// entries are signed (rho+1)-bit integers
-    for (auto& e: arr) {
+    resize(arr,emm);    // the dimension-m encryption-randomness vector
+    BoundedSizeElement rEnc(rho);// entries are signed rho-bit integers
+    for (auto& e: arr)
         rEnc.randomize(e);
-    }
+    //printEvec(std::cout<<"encryption randomness = ", arr) << std::endl;
 
     // Compute an encrypiton of zero as (CRS*arr, PK*arr)
     ctxt1 = A * arr;
@@ -170,9 +178,8 @@ void GlobalKey::internalEncrypt(EVector& ctxt1, EVector& ctxt2,
 // Decrypts a ciphertext, returning ptxt and noise. This function gets
 // the idx of this specific secret key in the global one, and then it
 // decrypts the relevant part of the ciphertext.
-void
-GlobalKey::internalDecrypt(Scalar& ptxt, Element& noise, const EVector& sk,
-                          int idx, const EVector& ct1, const EVector& ct2) const
+void GlobalKey::internalDecrypt(Scalar& ptxt,Element& noise,const EVector& sk,
+                        int idx, const EVector& ct1, const EVector& ct2) const
 {
     static const BigInt deltaZZ = scalar2bigInt(delta());
 
@@ -191,9 +198,10 @@ GlobalKey::internalDecrypt(Scalar& ptxt, Element& noise, const EVector& sk,
 
     // Set the noisy plaintext as <sk,ct1> - relevantEntryOf(ct2)
     // = sk A r -(<b,r> + x*g) = (sk A -(sk A + e))r -x*g = -<e,r> -x*g
-    Element noisyPtxt = innerProduct(sk,ct1) - ct2.at(idx);
+    Element noisyPtxt = innerProduct(sk,ct1) - ct2[idx];
     SVector noisyPtVec;
     conv(noisyPtVec, noisyPtxt);
+    //printSvec(std::cout<<" noisyPtxt=", noisyPtVec) << std::endl;
 
     // Decode the plaintext scalar from the noisy element, which has the
     // form (z0,z1) = -(x,x*Delta) -(e0,e1).  To decode, first compute
@@ -201,27 +209,43 @@ GlobalKey::internalDecrypt(Scalar& ptxt, Element& noise, const EVector& sk,
     // y = e1 -e0*Delta over the integers, and if also |e1| <Delta/2 then
     // (y mod Delta)= e1. Then extract x = -((y mod Delta)+z1)/Delta.
 
-    assert(noisyPtVec.length()==2); // only implemented for ell=2, for now
+    //assert(noisyPtVec.length()==2); // only implemented for ell=2, for now
 
-    BigInt tmp = scalar2bigInt(noisyPtVec[0]*delta() -noisyPtVec[1]);
-    if (tmp >= Pmod/2)
-        tmp -= Pmod;
+    BIVector tmpVec;
+    resize(tmpVec, ell);
+    BigInt& tmp = tmpVec[ell-1];
+    for (size_t i=0; i<ell-1; i++) { // tmpVec[i] = e[i+1] - Delta*e[i]
+        tmpVec[i] = scalar2bigInt( noisyPtVec[i]*delta() -noisyPtVec[i+1] );
+        if (tmpVec[i] > P()/2)       // map to [+- P/2]
+            tmpVec[i] -= P();
+    }
+    //std::cout << " tmpVec (e[i+1] - Delta*e[i]) =" << tmpVec << std::endl;
 
-    // reduce modulo Delta, and map to [+- Delta/2]
-    tmp %= deltaZZ;
-    if (tmp >= deltaZZ/2)
-        tmp -= deltaZZ;
-    else if (tmp < -deltaZZ/2)
-        tmp +=deltaZZ;
+    // sum_{i=0}^{ell-2} Delta^{ell-2-i}*tmpVec[i] = e[ell-1] -Delta^{ell-1}*e[0]
+    tmp = tmpVec[0];
+    for (int i=1; i<ell-1; i++) {
+        tmp *= deltaZZ;
+        tmp += tmpVec[i];
+    }
 
+    // reduce modulo Delta^{ell-1} and map to  [+- Delta^{ell-1}/2]
+    tmp %= delta2ellMinus1();
+    if (tmp >= delta2ellMinus1()/2)
+        tmp -= delta2ellMinus1();
+    else if (tmp < -delta2ellMinus1()/2)
+        tmp += delta2ellMinus1();
+    // now tmp = e[ell-1]
+    //std::cout << "e[ell-1] = " << tmp << std::endl;
+
+    for (int i=ell-2; i>=0; --i) {
+        tmpVec[i] = tmpVec[i+1] -tmpVec[i]; // = Delta*e[i]
+        tmpVec[i] /= deltaZZ;               // = e[i]
+    }
     SVector noiseVec;
-    resize(noiseVec, ell);  // allocate space
+    conv(noiseVec, tmpVec); // convert to scalars mod P
+    //printSvec(std::cout<<"e = ",noiseVec) << std::endl;
 
-    conv(noiseVec[1], tmp); // e1
-    ptxt = (noiseVec[1]+noisyPtVec[1])/ delta(); // -x=(e1+z1)/Delta
-
-    noiseVec[0] = ptxt-noisyPtVec[0]; // -x -(-x-e0) = e0
-    ptxt = -ptxt;                     // x
+    ptxt = -noisyPtVec[0] -noiseVec[0];
     conv(noise, noiseVec);
 }
 
