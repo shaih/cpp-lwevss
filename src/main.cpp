@@ -38,7 +38,7 @@ int main(int, char**) {
     std::cout << "- Found NTL version "<<NTL_VERSION <<std::endl;
     // std::cout << "- Found Sodium version "<<SODIUM_VERSION_STRING<<std::endl;
 
-    GlobalKey gpk("testContext", /*k*/10, /*m*/8, /*n*/5);
+    GlobalKey gpk("testContext",/*k*/10,/*m*/8,/*n*/4);
  
     //auto start = high_resolution_clock::now();
     ALGEBRA::EVector noise1;

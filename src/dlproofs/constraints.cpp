@@ -63,7 +63,7 @@ bool operator!=(const CompIter& a, const CompIter& b) {return !(a==b);}
 void LinConstraint::merge(const std::vector<LinConstraint>& constraints,
                                 const std::vector<Scalar>& coeffs) {
     if (constraints.size() != coeffs.size())
-        throw std::runtime_error("LinConstraint::merge argument mismatch");
+        throw std::runtime_error("LinConstraint::merge argument size mismatch");
 
     terms.clear();
     equalsTo = Scalar(); // initialize to zero
@@ -176,12 +176,8 @@ size_t makeAlmostDisjoint(LinConstraint& lin, QuadConstraint& quad, const Scalar
 }
 
 LinConstraint& LinConstraint::addTerm(size_t idx, const Scalar& s) {
-    if (s != Scalar()) { // if s != 0
-        Scalar& inMap = terms[idx]; // insert if not already there
-        inMap += s;
-        if (inMap.isZero()) // zeroed out, remove it
-            terms.erase(idx);
-    }
+    Scalar& inMap = terms[idx]; // insert if not already there
+    inMap += s;
     return *this;
 }
 
@@ -253,14 +249,33 @@ bool checkConstraint(const LinConstraint& cnstr, const PtxtVec& witness)
     auto it1 = cnstr.terms.begin();
     auto it2 = witness.begin();
     while (it1 != cnstr.terms.end() && it2 != witness.end()) {
-        // if they both point to the same key, remove key from c1
         if (it1->first != it2->first) // mismatched indexes
             return false;
         sum += it1->second * it2->second;
         ++it1; ++it2;
     }
+    if (it1 != cnstr.terms.end() || it2 != witness.end())
+        return false;
     return (sum == cnstr.equalsTo);
 }
+// Check sum_i constr[i]*witness[i]=cnstr.equalsTo, but allow the
+// witness to have more variables that just what's in the constraint
+bool checkConstraintLoose(const LinConstraint& cnstr, const PtxtVec& witness)
+{
+    Scalar sum;
+    auto it1 = cnstr.terms.begin();
+    while (it1 != cnstr.terms.end()) {
+        if (it1->second != CRV25519::Scalar()) { // if not zero
+            auto it2 = witness.find(it1->first); // find the corresponding variable
+            if (it2 == witness.end())            // no matching witness variable
+                return false;
+            sum += it1->second * it2->second;
+        }
+        ++it1;
+    }
+    return (sum == cnstr.equalsTo);
+}
+
 // Check that sum_i x[i]*y[i] = cnstr.equalsTo, and that the indexes match
 bool checkConstraint(const QuadConstraint& cnstr, const PtxtVec& xs, const PtxtVec& ys)
 {
@@ -269,11 +284,29 @@ bool checkConstraint(const QuadConstraint& cnstr, const PtxtVec& xs, const PtxtV
     auto xit = xs.begin();
     auto yit = ys.begin();
     while (it != cnstr.indexes.end() && xit != xs.end() && yit != ys.end()) {
-        // if they both point to the same key, remove key from c1
         if (*it != xit->first || *it != yit->first) // mismatched indexes
             return false;
         sum += xit->second * yit->second;
         ++it; ++xit; ++yit;
+    }
+    if (it != cnstr.indexes.end() || xit != xs.end() || yit != ys.end())
+        return false;
+    return (sum == cnstr.equalsTo);
+}
+// Check that sum_i x[i]*y[i] = cnstr.equalsTo, but allow the
+// witness to have more variables that just what's in the constraint
+bool checkConstraintLoose(const QuadConstraint& cnstr,
+                          const PtxtVec& xs, const PtxtVec& ys)
+{
+    Scalar sum;
+    auto it = cnstr.indexes.begin();
+    while (it != cnstr.indexes.end()) {
+        auto xit = xs.find(*it); // find the corresponding x and y
+        auto yit = ys.find(*it);
+        if (xit==xs.end() || yit==ys.end()) // x or y not found
+            return false;
+        sum += xit->second * yit->second;
+        ++it;
     }
     return (sum == cnstr.equalsTo);
 }

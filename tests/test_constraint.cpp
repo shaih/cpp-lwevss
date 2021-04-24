@@ -66,9 +66,17 @@ static bool test_Constraints()
         {1,Scalar().setInteger(1)},
         {3,Scalar().setInteger(1)},
         {4,Scalar().setInteger(1)},
+        {5,Scalar().setInteger(-2)},
         {6,Scalar().setInteger(-2)}
     };
     if (checkConstraint(c1, zs))
+        return false;
+
+    // check also the loose variant
+    if (!checkConstraintLoose(c1, zs))
+        return false;
+    zs.erase(5);
+    if (checkConstraintLoose(c1, zs))
         return false;
 
     QuadConstraint q1;
@@ -127,6 +135,15 @@ static bool test_Constraints()
         return false;
     q1.equalsTo.setInteger(2);
     if (checkConstraint(q1, xs, ys))
+        return false;
+
+    // Check also the loose variants
+    q1.equalsTo.setInteger(1);
+    xs[2] = Scalar().setInteger(2);
+    if (!checkConstraintLoose(q1, xs, ys))
+        return false;
+    ys.erase(1);
+    if (checkConstraintLoose(q1, xs, ys))
         return false;
 
     return true;

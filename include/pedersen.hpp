@@ -127,7 +127,7 @@ inline bool verifyCom2(const Point& c, const Point* Gs, const Scalar* xes,
 struct PedersenContext {
     std::string tag;
     //std::vector<unsigned char> key;
-    explicit PedersenContext(const std::string& t): tag(t) {};
+    explicit PedersenContext(const std::string& t=std::string()): tag(t) {};
 
     const Point getG(int i) { // returns G_i
         std::string label = tag+"G"+std::to_string(i);

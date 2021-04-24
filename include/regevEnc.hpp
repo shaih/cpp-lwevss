@@ -32,12 +32,11 @@
 namespace REGEVENC {
 
 // Some parameters are hard-wired, others are set at runtime
-constexpr int ell=4;        // redundancy parameter, # dimensions per party
-constexpr int sigmaKG=10;  // keygen noise in [+-(2^{sigmaKG}-1)]
-constexpr int sigmaEnc1=10; // encryption small noise in [+-(2^{sigmaEnc1}-1)]
-constexpr int sigmaEnc2=20; // encryption large noise in [+-(2^{sigmaEnc2}-1)]
-constexpr int skSize=2;     // secret key entries in [+-(2^{skSize}-1)]
-constexpr int rho=2;        // encryption randomness in [+-(2^{rho}-1)]
+inline constexpr int sigmaKG=2;  // keygen noise in [+-(2^{sigmaKG}-1)]
+inline constexpr int sigmaEnc1=2; // encryption small noise in [+-(2^{sigmaEnc1}-1)]
+inline constexpr int sigmaEnc2=2; // encryption large noise in [+-(2^{sigmaEnc2}-1)]
+inline constexpr int skSize=2;     // secret key entries in [+-(2^{skSize}-1)]
+inline constexpr int rho=2;        // encryption randomness in [+-(2^{rho}-1)]
 
 // The global key for our Regev encrypiton includes the variour params,
 // the CRS k-by-m matrix A over and the ell*enn-by-emm matrix B with enn
@@ -54,18 +53,21 @@ public:
     static const ALGEBRA::BigInt& delta2ellMinus1() { return delta2ellm1; }
     static const ALGEBRA::Element& g() { return gElement; }
 
-    std::string tag; // a string to tag this public key
-    int kay; // dimension of LWE-secret
-    int emm; // #-of-columns in the CRS 
-    int enn; // # of parties
+    static constexpr int ell=2; // redundancy parameter, # dimensions per party
 
-    size_t nPks; // number of ell-row public keys that are stored in B
+    std::string tag; // a string to tag this public key
+    int enn;  // # of parties
+    int tee;  // threshold, one more than # of corrupted
+    int kay;  // dimension of LWE-secret (over GF(P^ell))
+    int emm;  // #-of-columns in the CRS (over GF(P^ell))
+
+    size_t nPks; // number of GF(P^ell) public keys that are stored in B
     ALGEBRA::EMatrix A, B; // The matrix M = (A / B)
     unsigned char Ahash[32]; // fingerprint of the CRS A
     unsigned char Bhash[32]; // fingerprint of the key B
 
     GlobalKey() = delete;
-    GlobalKey(const std::string t, int k, int m, int n,
+    GlobalKey(const std::string tg, int k, int m, int n,
               const ALGEBRA::EMatrix* crs=nullptr); // optional - a pre-selected CRS
 
     const unsigned char* const crsHash() const {return Ahash;}
@@ -80,8 +82,9 @@ public:
 
     // generate a new key-pair, returns (sk,pk) and optionally also noise,
     // each an ell-by-something matrix
-    std::pair< ALGEBRA::EVector, ALGEBRA::EVector > genKeys(ALGEBRA::EVector* n=nullptr) const {
-        std::pair< ALGEBRA::EVector, ALGEBRA::EVector > ret;
+    typedef std::pair< ALGEBRA::EVector, ALGEBRA::EVector > KeyPair;
+    KeyPair genKeys(ALGEBRA::EVector* n=nullptr) const {
+        KeyPair ret;
         if (n != nullptr)
             internalKeyGen(ret.first, ret.second, *n);
         else {
@@ -100,17 +103,22 @@ public:
 
     // Encrypt a vector of plaintext scalars, return ct0,ct1 and optionally
     // also the randomness and noise that were used in encryption
-    std::pair<ALGEBRA::EVector,ALGEBRA::EVector>
-    encrypt(const ALGEBRA::SVector& ptxt, ALGEBRA::EVector& r, ALGEBRA::EVector& e) const {
-        std::pair<ALGEBRA::EVector,ALGEBRA::EVector> ct;
+    typedef std::pair< ALGEBRA::EVector, ALGEBRA::EVector > CtxtPair;
+    CtxtPair encrypt(const ALGEBRA::SVector& ptxt,
+                     ALGEBRA::EVector& r, ALGEBRA::EVector& e) const {
+        CtxtPair ct;
         internalEncrypt(ct.first, ct.second, ptxt, r, e);
         return ct;
     }
-    std::pair<ALGEBRA::EVector,ALGEBRA::EVector>
-    encrypt(const ALGEBRA::SVector& ptxt) const {
+    CtxtPair encrypt(const ALGEBRA::SVector& ptxt) const {
         ALGEBRA::EVector r, e;
         return encrypt(ptxt, r, e);
     }
+
+    // Decote the plaintext scalar (and optionally also the noise)
+    // from the noisy plaintext
+    ALGEBRA::Scalar decodePtxt(ALGEBRA::Element& noisyPtxt,
+                               ALGEBRA::Element* noise=nullptr) const;
 
     // The actual implementation of decryption
     void internalDecrypt(ALGEBRA::Scalar& ptxt, ALGEBRA::Element& noise,
@@ -121,7 +129,7 @@ public:
     // This function gets the idx of this specific secret key in the
     // global key, and it decrypts the relevant part of the ciphertext.
     ALGEBRA::Scalar decrypt(const ALGEBRA::EVector& sk, int idx,
-                const std::pair<ALGEBRA::EVector,ALGEBRA::EVector>& ctxt, ALGEBRA::Element* n=nullptr) {
+                const CtxtPair& ctxt, ALGEBRA::Element* n=nullptr) {
         ALGEBRA::Scalar pt;
         if (n != nullptr)
             internalDecrypt(pt, *n, sk, idx, ctxt.first, ctxt.second);
@@ -151,10 +159,10 @@ public:
 class ZeroOneElement {
 public:
     ALGEBRA::Element& randomize(ALGEBRA::Element& e) const {
-        size_t x = ALGEBRA::randBitsize(ell*2); // 2*ell random bits
+        size_t x = ALGEBRA::randBitsize(GlobalKey::ell*2); // 2*ell random bits
         ALGEBRA::SVector v;
-        ALGEBRA::resize(v,ell);
-        for (size_t i=0; i<ell; i++) {
+        ALGEBRA::resize(v,GlobalKey::ell);
+        for (size_t i=0; i<GlobalKey::ell; i++) {
             conv(v[i], (x&1)-((x>>1)&1)); // -1/0/1 scalar
             x >>= 2;
         }
@@ -197,8 +205,8 @@ public:
     ALGEBRA::Element& randomize(ALGEBRA::Element& e) const {
         BoundedSizeScalar bss(bitSize);
         ALGEBRA::SVector v;
-        ALGEBRA::resize(v,ell);
-        for (size_t i=0; i<ell; i++)
+        ALGEBRA::resize(v,GlobalKey::ell);
+        for (size_t i=0; i<GlobalKey::ell; i++)
             bss.randomize(v[i]);
         ALGEBRA::conv(e, v); // convert to an element in GF(P^ell)
         return e;
@@ -211,3 +219,4 @@ public:
 
 } // end of namespace REGEVENC
 #endif // ifndef _REGEVENC_HPP_
+

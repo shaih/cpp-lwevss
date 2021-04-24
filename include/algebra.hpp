@@ -51,6 +51,9 @@ typedef NTL::mat_ZZ_p SMatrix;
 typedef NTL::vec_ZZ_pE EVector;
 typedef NTL::mat_ZZ_pE EMatrix;
 
+inline int bytesPerScalar() { return (NumBits(NTL::ZZ_p::modulus())+7)/8; }
+inline int scalarsPerElement() { return NTL::ZZ_pE::degree(); }
+
 inline const Scalar& zeroScalar() { return NTL::ZZ_p::zero(); }
 inline Scalar& randomizeScalar(Scalar& s) { NTL::random(s); return s; }
 inline Element& randomizeElement(Element& e) { NTL::random(e); return e; }
@@ -78,14 +81,25 @@ inline size_t log2roundUp(const BigInt& n) {
 }
 
 // some conversions
-inline BigInt toBigInt(long n) {return NTL::conv<NTL::ZZ>(n);}
+inline BigInt toBigInt(long n) {
+    NTL::ZZ num(NTL::INIT_SIZE,4);
+    conv(num, n);
+    return num;
+}
 inline BigInt scalar2bigInt(const Scalar& s) {return NTL::conv<NTL::ZZ>(s);}
+inline const Scalar& coeff(const Element& e, size_t idx) {
+    return NTL::coeff(NTL::rep(e), idx);
+}
+
+inline void bigIntBytes(unsigned char *buf, const BigInt& bi, size_t bufSize){
+    NTL::BytesFromZZ(buf, bi, bufSize);
+}
 inline void scalarBytes(unsigned char *buf, const Scalar& s, size_t bufSize){
-    NTL::BytesFromZZ(buf, NTL::rep(s), bufSize);
+    bigIntBytes(buf, NTL::rep(s), bufSize);
 }
 inline void elementBytes(unsigned char *buf, const Element& e, size_t bufSize){
     const SVector& v = NTL::rep(e).rep; // the underlying representation as vec_ZZ_p
-    size_t len = 32;
+    size_t len = bytesPerScalar(); // =32
     for (size_t i=0; i<v.length() && bufSize>0; i++) {
         if (len > bufSize)
             len = bufSize;
@@ -93,27 +107,28 @@ inline void elementBytes(unsigned char *buf, const Element& e, size_t bufSize){
         bufSize -= len;
         buf += len;
     }
+    if (bufSize > 0) // zero-out the rest of the buffer
+        memset(buf, 0, bufSize);
 }
 
 inline void scalarFromBytes(Scalar& s, const unsigned char *buf, size_t bufSize){
-    NTL::ZZ n;
+    NTL::ZZ n(NTL::INIT_SIZE,4);
     NTL::ZZFromBytes(n, buf, bufSize);
     NTL::conv(s,n);
 }
 inline void elementFromBytes(Element& e, const unsigned char *buf, size_t bufSize){
-    NTL::ZZ_pX& px = (NTL::ZZ_pX&)NTL::rep(e).rep; // underlying representation as ZZ_pX
-    // dirty: discards const-ness
-    size_t len = 32;
-    for (size_t i=0; i<NTL::ZZ_pE::degree() && bufSize>0; i++) {
+    NTL::ZZ_pX px;
+    size_t len = bytesPerScalar();
+    for (size_t i=0; i<scalarsPerElement() && bufSize>0; i++) {
         if (len > bufSize)
             len = bufSize;
-        NTL::ZZ n;
-        NTL::ZZFromBytes(n, buf, bufSize);
-        NTL::conv(px.rep[i], n);
+        NTL::ZZ n(NTL::INIT_SIZE,4);
+        NTL::ZZFromBytes(n, buf, len);
+        SetCoeff(px, i, NTL::conv<NTL::ZZ_p>(n));
         bufSize -= len;
         buf += len;
     }
-    px.normalize();
+    conv(e,px);
 }
 
 // Other utilities
@@ -121,6 +136,16 @@ inline Scalar innerProduct(const SVector& v1, const SVector& v2) {
     Scalar s;
     NTL::InnerProduct(s,v1,v2);
     return s;
+}
+inline Element innerProduct(const EVector& v1, const SVector& v2) {
+    Element e;
+    int len = std::min(v1.length(), v2.length());
+    for (int i=0; i<len; i++)
+        e += v1[i]*v2[i];
+    return e;
+}
+inline Element innerProduct(const SVector& v1, const EVector& v2) {
+    return innerProduct(v2,v1);
 }
 inline Element innerProduct(const EVector& v1, const EVector& v2) {
     Element e;
@@ -137,15 +162,22 @@ VecType& push_back(VecType &v, const ElemType& s) {
 // convert between an element and a vector of scalars
 inline void conv(Element& e, const SVector& v) {
     NTL::ZZ_pX& px = (NTL::ZZ_pX&) rep(e); // dirty: discards const-ness
-    size_t n = std::min(NTL::ZZ_pE::degree(), v.length());
+    size_t n = std::min(scalarsPerElement(), (int)v.length());
     for (size_t i=0; i<n; i++) {
         NTL::SetCoeff(px, i, v[i]);
     }
 }
 inline void conv(SVector& v, const Element& e) {
-    resize(v, NTL::ZZ_pE::degree());
+    resize(v, scalarsPerElement());
     for (size_t i=0; i<v.length(); i++) {
         v[i] = NTL::coeff(rep(e), i);
+    }
+}
+inline void conv(BIVector& to, const EVector& from) {
+    resize(to, scalarsPerElement() *from.length());
+    int idx = 0;
+    for (int i=0; i<from.length(); i++) for (int j=0; j<scalarsPerElement(); j++) {
+        conv(to[idx++], ALGEBRA::coeff(from[i], j));
     }
 }
 
@@ -156,7 +188,7 @@ inline void initRandomness(const std::string& st) {
 
 // Debugging helpers
 inline std::ostream& printScalar(std::ostream& st, const Scalar& sc) {
-    BigInt szz;
+    BigInt szz(NTL::INIT_SIZE,4);
     conv(szz,sc);
     if (szz > NTL::ZZ_p::modulus()/2)
         st <<  (szz - NTL::ZZ_p::modulus());
@@ -172,7 +204,7 @@ inline std::ostream& printSvec(std::ostream& st, const SVector& sv) {
 }
 inline std::ostream& printElement(std::ostream& st, const Element& el) {
     const NTL::ZZ_pX& ex = rep(el);
-    size_t ell = NTL::ZZ_pE::degree();
+    size_t ell = scalarsPerElement();
     st << "[";
     for (size_t i=0; i<ell-1; i++)
         printScalar(st, NTL::coeff(ex, i)) << " ";

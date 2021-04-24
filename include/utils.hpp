@@ -35,5 +35,6 @@ TwoSqrts decomposeProbablePrime(BigInt p);
 // Decomposes a nonegative integer into a sum of four squares
 FourSqrts decompose4(BigInt n);
 
+inline int ceilDiv(int a, int b) { return (a+b-1)/b;}
 } // end of namespace UTILS
 #endif // ifndef _UTILS_HPP_

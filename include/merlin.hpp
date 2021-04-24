@@ -61,7 +61,8 @@ inline size_t intFromBytes(unsigned char *buf) {
 
 struct MerlinBPctx { // A wrapper object around the "C" merlin_transcript
     merlin_transcript mctx;
-    explicit MerlinBPctx(const std::string& label) {
+    explicit MerlinBPctx(const merlin_transcript& m): mctx(m) {}
+    explicit MerlinBPctx(const std::string& label=std::string()) {
         merlin_transcript_init(&mctx, (const unsigned char *)label.data(), label.size());
     }
 

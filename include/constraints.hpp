@@ -107,7 +107,7 @@ public:
 
     // Add a term idx->s to a constraint.
     // If this constraint already has a term idx->s' then s will be added
-    // to s', resultin gin idx->(s+s'). Otherwise idx->s will be inserted
+    // to s', resulting in idx->(s+s'). Otherwise idx->s will be inserted
     // to the constraint. Returns true if a term idx->s' existed before,
     // false if inserted anew.
     LinConstraint& addTerm(size_t idx, const Scalar& s);
@@ -170,8 +170,15 @@ size_t makeAlmostDisjoint(LinConstraint& lin, QuadConstraint& quad, const Scalar
 
 // Debugging functions
 
+// Check that the constrains hold and that the indexes match
 bool checkConstraint(const LinConstraint& cnstr, const PtxtVec& witness);
 bool checkConstraint(const QuadConstraint& cnstr, const PtxtVec& xs, const PtxtVec& ys);
+
+// Check that the constrains hold but allow the witness to have more
+// variables than just what's in the constraint
+bool checkConstraintLoose(const LinConstraint& cnstr, const PtxtVec& witness);
+bool checkConstraintLoose(const QuadConstraint& cnstr,
+                          const PtxtVec& xs, const PtxtVec& ys);
 
 } /* end of namespace DLPROOFS */
 #endif // ifndef _CONSTRAINTS_HPP_

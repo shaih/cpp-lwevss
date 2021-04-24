@@ -57,8 +57,9 @@ struct FlatLinStmt {
     Scalar equalsTo;
     std::vector<Scalar> witness;
 
+    FlatLinStmt() = default;
     FlatLinStmt(const std::string& label,
-                  const LinConstraint& cnstr, const PtxtVec& xes=PtxtVec());
+                const LinConstraint& cnstr, const PtxtVec& xes=PtxtVec());
 };
 
 // The transcript of a linear bulletproof-like proof
@@ -119,6 +120,7 @@ struct FlatQuadStmt {
     Scalar equalsTo;
     std::vector<Scalar> wG, wH;
 
+    FlatQuadStmt() = default;
     FlatQuadStmt(const std::string& label, const QuadConstraint& cnstr,
             const PtxtVec& xes=PtxtVec(), const PtxtVec& ys=PtxtVec());
 };

@@ -29,6 +29,8 @@ extern "C" {
 }
 using namespace ALGEBRA;
 
+#define DEBUGGING
+
 namespace REGEVENC {
 
 BigInt GlobalKey::Pmod;
@@ -50,7 +52,7 @@ Element GlobalKey::initPdeltaG() { // Implementation is NTL-specific
 
     // Initialize delta
     BigInt delta = toBigInt(1) << (252/ell);     // approx P^{1/ell}
-    conv(GlobalKey::deltaScalar, delta );        // convert to a scalar mod P
+    conv(GlobalKey::deltaScalar, delta);         // convert to a scalar mod P
     power(GlobalKey::delta2ellm1, delta, ell-1); // Delta^{ell-1}
 
     // Initialize the element g = (Delta^{ell-1},...,Delta,1)
@@ -66,28 +68,36 @@ Element GlobalKey::initPdeltaG() { // Implementation is NTL-specific
     return g; // will be assigned to GlobalKey::gElement
 }
 
-GlobalKey::GlobalKey(const std::string t, int k, int m, int n, const EMatrix* crs):
-        tag(t),kay(k),emm(m),enn(n),nPks(0) {
+GlobalKey::GlobalKey(const std::string tg, int k, int m, int n, const EMatrix* crs):
+        tag(tg),kay(k),emm(m),enn(n),nPks(0) {
     if (kay<=0 || emm<=0 || enn<=0) {
         throw std::runtime_error("GlobalKey with invalid parameters");
     }
+    tee = (n-1)/2;
     resize(A,k,m);
-    resize(B,n,m);
+    resize(B,enn,m);
 
     // Fill the CRS with pseudorandom entries, derived from the tag,
     // also hash them to get a fingerprint
     std::string t2 = tag+"CRS";
-    crypto_generichash_state state;
-    crypto_generichash_init(&state, (unsigned char*)t2.data(), t2.size(), sizeof(Ahash));
-
     PRGbackupClass prgBak; // backup of current randomstate
     initRandomness(t2);
-    unsigned char buf[32*ell];
     for (int i=0; i<A.NumRows(); i++) for (int j=0; j<A.NumCols(); j++) {
         if (crs != nullptr) // use provided CRS
             A[i][j] = (*crs)[i][j];
         else
+#ifndef DEBUGGING
             ALGEBRA::randomizeElement(A[i][j]); // select a new random element
+#else
+            conv(A[i][j], 1);
+#endif
+    }
+
+    // Compute a hash of the CRS, to be used as its fingerprint
+    crypto_generichash_state state;
+    crypto_generichash_init(&state, (unsigned char*)t2.data(), t2.size(), sizeof(Ahash));
+    unsigned char buf[32*ell];
+    for (int i=0; i<A.NumRows(); i++) for (int j=0; j<A.NumCols(); j++) {
         elementBytes(buf, A[i][j], sizeof(buf));
         crypto_generichash_update(&state, buf, sizeof(buf));
     }
@@ -189,8 +199,6 @@ void GlobalKey::internalEncrypt(EVector& ctxt1, EVector& ctxt2,
 void GlobalKey::internalDecrypt(Scalar& ptxt,Element& noise,const EVector& sk,
                         int idx, const EVector& ct1, const EVector& ct2) const
 {
-    static const BigInt deltaZZ = scalar2bigInt(delta());
-
     // sanity checks
     if (sk.length() != kay) {
         throw std::runtime_error("mal-formed secret key, expected a "+
@@ -207,17 +215,19 @@ void GlobalKey::internalDecrypt(Scalar& ptxt,Element& noise,const EVector& sk,
     // Set the noisy plaintext as <sk,ct1> - relevantEntryOf(ct2)
     // = sk A r -(<b,r> + x*g) = (sk A -(sk A + e))r -x*g = -<e,r> -x*g
     Element noisyPtxt = innerProduct(sk,ct1) - ct2[idx];
-    SVector noisyPtVec;
-    conv(noisyPtVec, noisyPtxt);
-    //printSvec(std::cout<<" noisyPtxt=", noisyPtVec) << std::endl;
-
+ 
     // Decode the plaintext scalar from the noisy element, which has the
     // form (z0,z1) = -(x,x*Delta) -(e0,e1).  To decode, first compute
     // y = z0*Delta-z1 = e1-e0*Delta (mod P). If |e1 -e0*Delta|<P/2 then
     // y = e1 -e0*Delta over the integers, and if also |e1| <Delta/2 then
     // (y mod Delta)= e1. Then extract x = -((y mod Delta)+z1)/Delta.
-
-    //assert(noisyPtVec.length()==2); // only implemented for ell=2, for now
+#if 1
+    ptxt = decodePtxt(noisyPtxt, &noise);
+#else
+    static const BigInt deltaZZ = scalar2bigInt(delta());
+    SVector noisyPtVec;
+    conv(noisyPtVec, noisyPtxt);
+    //printSvec(std::cout<<" noisyPtxt=", noisyPtVec) << std::endl;
 
     BIVector tmpVec;
     resize(tmpVec, ell);
@@ -255,6 +265,57 @@ void GlobalKey::internalDecrypt(Scalar& ptxt,Element& noise,const EVector& sk,
 
     ptxt = -noisyPtVec[0] -noiseVec[0];
     conv(noise, noiseVec);
+#endif
+}
+
+// Decode the plaintext scalar from the noisy element, which has the
+// form (z0,z1) = -(x,x*Delta) -(e0,e1).  To decode, first compute
+// y = z0*Delta-z1 = e1-e0*Delta (mod P). If |e1 -e0*Delta|<P/2 then
+// y = e1 -e0*Delta over the integers, and if also |e1| <Delta/2 then
+// (y mod Delta)= e1. Then extract x = -((y mod Delta)+z1)/Delta.
+Scalar GlobalKey::decodePtxt(Element& noisyPtxt, Element* noise) const {
+    static const BigInt deltaZZ = scalar2bigInt(delta());
+    SVector noisyPtVec;
+    conv(noisyPtVec, noisyPtxt);
+
+    //printSvec(std::cout<<" noisyPtxt=", noisyPtVec) << std::endl;
+    BIVector tmpVec;
+    resize(tmpVec, ell);
+    BigInt& tmp = tmpVec[ell-1];
+    for (size_t i=0; i<ell-1; i++) { // tmpVec[i] = e[i+1] - Delta*e[i]
+        tmpVec[i] = scalar2bigInt( noisyPtVec[i]*delta() -noisyPtVec[i+1] );
+        if (tmpVec[i] > P()/2)       // map to [+- P/2]
+            tmpVec[i] -= P();
+    }
+    //std::cout << " tmpVec (e[i+1] - Delta*e[i]) =" << tmpVec << std::endl;
+
+    // sum_{i=0}^{ell-2} Delta^{ell-2-i}*tmpVec[i] = e[ell-1] -Delta^{ell-1}*e[0]
+    tmp = tmpVec[0];
+    for (int i=1; i<ell-1; i++) {
+        tmp *= deltaZZ;
+        tmp += tmpVec[i];
+    }
+
+    // reduce modulo Delta^{ell-1} and map to  [+- Delta^{ell-1}/2]
+    tmp %= delta2ellMinus1();
+    if (tmp >= delta2ellMinus1()/2)
+        tmp -= delta2ellMinus1();
+    else if (tmp < -delta2ellMinus1()/2)
+        tmp += delta2ellMinus1();
+    // now tmp = e[ell-1]
+    //std::cout << "e[ell-1] = " << tmp << std::endl;
+
+    for (int i=ell-2; i>=0; --i) {
+        tmpVec[i] = tmpVec[i+1] -tmpVec[i]; // = Delta*e[i]
+        tmpVec[i] /= deltaZZ;               // = e[i]
+    }
+    SVector noiseVec;
+    conv(noiseVec, tmpVec); // convert to scalars mod P
+    //printSvec(std::cout<<"e = ",noiseVec) << std::endl;
+
+    if (noise != nullptr) conv(*noise, noiseVec);
+
+    return -noisyPtVec[0] -noiseVec[0];
 }
 
 } // end of namespace REGEVENC

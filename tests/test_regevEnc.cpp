@@ -29,8 +29,14 @@ static bool verifyKeyPair(Matrix& crs, Matrix& sk, Matrix& noise, Matrix& pk) {
 }
 #endif
 
+static bool test_decode() {
+// ALGEBRA::Scalar decodePtxt(ALGEBRA::Element& noisyPtxt,
+//                            ALGEBRA::Element* noise=nullptr) const;
+    return true;
+}
+
 static bool test_Regev() {
-    GlobalKey gpk("testContext", /*k*/100, /*m*/80, /*n*/5);
+    GlobalKey gpk("testContext",/*k*/100,/*m*/80,/*n*/8);
     ALGEBRA::EVector noise1;
     auto [sk1,pk1] = gpk.genKeys(&noise1);
     auto [sk2,pk2] = gpk.genKeys();
@@ -38,6 +44,7 @@ static bool test_Regev() {
     size_t i2 = gpk.addPK(pk2);
     for (size_t i=2; i<gpk.enn; i++) // add many more pk's, to use in encryption
         gpk.addPK(pk2);
+    gpk.setKeyHash();
 
     // encryption
     ALGEBRA::SVector ptxt(NTL::INIT_SIZE, gpk.enn);
