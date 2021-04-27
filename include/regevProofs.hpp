@@ -47,14 +47,16 @@ typedef std::array<CRV25519::Scalar,2> TwoScalars;
 
 #define DEBUGGING
 
-inline constexpr int JLDIM = 256; // Target dimension of Johnson–Lindenstrauss
-inline constexpr int LINYDIM=128; // Target dimension in approximate l-infty proofs
 inline constexpr int PAD_SIZE=4; // add 4 scalars to pad to a specific sum-of-squares
 // We break the decryption error vector into subvectors, each with this many scalars
 #ifndef DEBUGGING
-inline constexpr int DEC_ERRV_SZ=16;
+inline constexpr int DEC_ERRV_SZ=16; // size of decryption noise subvectors
+inline constexpr int JLDIM = 256;    // Target dimension of Johnson–Lindenstrauss
+inline constexpr int LINYDIM=128;    // Target dimension in approximate l-infty proofs
 #else
 inline constexpr int DEC_ERRV_SZ=2;
+inline constexpr int JLDIM = 4;
+inline constexpr int LINYDIM=4;
 #endif
 inline void conv(CRV25519::Scalar& to, const ALGEBRA::BigInt& from) {
     ALGEBRA::bigIntBytes(to.bytes, from, sizeof(to.bytes));
@@ -161,7 +163,7 @@ struct VerifierData {
     // The various public size bounds
     ALGEBRA::BigInt B_decNoise;// bounds each sub-vector of decryption noise
     ALGEBRA::BigInt B_sk;      // bounds the secret-key size
-    ALGEBRA::BigInt B_encRand; // bounds the encryption randomness size
+    ALGEBRA::BigInt B_encRnd;  // bounds the encryption randomness size
     ALGEBRA::BigInt B_encNoise;// bounds the size of the encryption noise
     ALGEBRA::BigInt B_kGenNoise;// bounds the size of the keygen noise
     ALGEBRA::BigInt B_smallness;// Used in the approximate smallness protocol
@@ -198,6 +200,10 @@ struct VerifierData {
     std::vector<DLPROOFS::LinConstraint> linConstr;
     std::vector<DLPROOFS::QuadConstraint> normConstr;
 
+    // pointers into the above vectors
+    DLPROOFS::LinConstraint *decLinCnstr, *encLinCnstr, *kGenLinCnstr, *reShrLinCnstr, *smlnsLinCnstr;
+    DLPROOFS::QuadConstraint *rQuadCnstr, *encErrQuadCnstr, *skQuadCnstr, *kgErrQuadCnstr;
+
     // Set the indexes to their default values
     void setIndexes();
     void computeGenerators();
@@ -222,8 +228,11 @@ struct VerifierData {
             =kGenErrCom =kGenErrPadCom =empty2points;
         pt1Com = pt2Com = yCom = Point::identity();
 
-        linConstr.clear();
-        normConstr.clear();
+        // empty the constraints w/o invalidating the pointers to them
+        DLPROOFS::LinConstraint emptyLin;
+        for (auto& lc : linConstr) lc = emptyLin;
+        DLPROOFS::QuadConstraint emptyQuad;
+        for (auto& qc : normConstr) qc = emptyQuad;
     }
 
     VerifierData() = default;
@@ -249,11 +258,11 @@ struct ProverData {
     // the original vector we just keep a pointer to them, for the padding
     // we allocate separate EVectors to hold them.
 
-    ALGEBRA::EVector *sk1, *decErr, *r, *encErr, *sk2, *kGenErr;
+    ALGEBRA::EVector *sk1, *decErr, *r, *sk2;
     ALGEBRA::SVector *pt1, *pt2, *y;
 
-    ALGEBRA::EVector sk1Padding, decErrPadding, rPadding, encErrPadding,
-        sk2Padding, kGenErrPadding;
+    ALGEBRA::EVector sk1Padding, decErrPadding, rPadding, 
+        encErr, encErrPadding, sk2Padding, kGenErr, kGenErrPadding;
 
     // Reset when preparing for a new proof at the prover's site
     void prepareForNextProof() {
@@ -271,13 +280,8 @@ struct ProverData {
             =sk2PadRnd =kGenErrRnd =kGenErrPadRnd =empty2scalars;
         pt1Rnd =pt2Rnd =yRnd = CRV25519::Scalar();
 
-        decErr = r = encErr = sk2 = kGenErr = nullptr;
+        decErr = r = sk2 = nullptr;
         pt1 = pt2 = y = nullptr;
-        clear(decErrPadding);
-        clear(rPadding);
-        clear(encErrPadding);
-        clear(sk2Padding);
-        clear(kGenErrPadding);
     }
 
     ProverData() = default;    
@@ -306,6 +310,23 @@ void proveDecryption(ProverData& pd, const ALGEBRA::SVector& ptxt,
 void verifyDecryption(VerifierData& vd, // vd has all the commitments
     const ALGEBRA::EMatrix& ctMat, const ALGEBRA::EVector& ctVec);
 
+// Proof of encryption. We assume that the ProverData,VerifierData are
+// already initialized.
+void proveEncryption(ProverData& pd, const ALGEBRA::SVector& ptxt,
+        const ALGEBRA::EVector& rnd, const ALGEBRA::EVector& noise,
+        const ALGEBRA::EVector& ct1, const ALGEBRA::EVector& ct2);
+
+void verifyEncryption(VerifierData& vd, // vd has all the commitments
+        const ALGEBRA::EVector& ct1, const ALGEBRA::EVector& ct2);
+
+
+
+
+
+
+
+
+
 
 /****** Internal functions, decleared here mostly for unit testing *******/
 
@@ -330,7 +351,7 @@ void pad2exactNorm(const ALGEBRA::SVector& v,
 void pad2exactNorm(const ALGEBRA::EVector& v,
         ALGEBRA::EVector& padding, const ALGEBRA::BigInt& bound);
 void pad2exactNorm(const ALGEBRA::Element* v, size_t len,
-    const ALGEBRA::BigInt& bound, ALGEBRA::Element* padSpace);
+        ALGEBRA::Element* padSpace, const ALGEBRA::BigInt& bound);
 
 // Expand a constraint a*x with a in GF(p^e) to e constrints over scalars,
 // namely store in e constraints in e variables the e-by-e matrix representing

@@ -194,6 +194,7 @@ bool test_constraints() {
 
 bool test_proofs() {
     GlobalKey gpk("testContext", /*k*/3, /*m*/2, /*n*/5);
+    TernaryEMatrix::init();
     MerlinRegev mer;
     PedersenContext ped;
     VerifierData vd(gpk, ped, mer);
@@ -257,6 +258,9 @@ bool test_proofs() {
     vd.sk1PadCom[1] = commit(sk[partyIdx], vd.sk1PadIdx, vd.Hs, pd.sk1PadRnd[1], origSize);
 
     proveDecryption(pd, ptxt2, decNoise, ctxtMat, ctxtVec);
+    proveEncryption(pd, ptxt1[partyIdx], encRnd[partyIdx], encNoise[partyIdx],
+                    ctxt[partyIdx].first,  ctxt[partyIdx].second);
+
     return true;
 }
 

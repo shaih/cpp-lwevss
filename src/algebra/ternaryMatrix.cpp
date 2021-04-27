@@ -205,6 +205,7 @@ TernaryEMatrix& TernaryEMatrix::setFromBytes(unsigned char* bytes) {
     return ev;
 }*/
 
+// result = eVector * trenaryMatrix
 void leftVecMult(EVector& result, const EVector& ev, const TernaryEMatrix& mat) {
     if (mat.Ms.size() != mat.degree || mat.degree <= 0) {
         throw std::runtime_error("TernaryEMatrix::leftVecMult: uninitialized matrix");
@@ -217,6 +218,7 @@ void leftVecMult(EVector& result, const EVector& ev, const TernaryEMatrix& mat) 
         result += tmp;
     }
 }
+// result = trenaryMatrix * eVector
 void rightVecMult(EVector& result, const TernaryEMatrix& mat, const EVector& ev) {
     if (mat.Ms.size() != mat.degree || mat.degree <= 0) {
         throw std::runtime_error("TernaryEMatrix::rightVecMult: uninitialized matrix");
@@ -229,6 +231,7 @@ void rightVecMult(EVector& result, const TernaryEMatrix& mat, const EVector& ev)
         result += tmp;
     }
 }
+// result = eMatrix * trenaryMatrix
 void leftMatMult(EMatrix& result, const EMatrix& mat1, const TernaryEMatrix& mat2) {
     if (mat2.Ms.size() != mat2.degree || mat2.degree <= 0) {
         throw std::runtime_error("TernaryEMatrix::leftMatMult: uninitialized matrix");
@@ -241,6 +244,7 @@ void leftMatMult(EMatrix& result, const EMatrix& mat1, const TernaryEMatrix& mat
         result += tmp;
     }
 }
+// result = trenaryMatrix * eMatrix
 void rightMatMult(EMatrix& result, const TernaryEMatrix& mat1, const EMatrix& mat2) {
     if (mat1.Ms.size() != mat1.degree || mat1.degree <= 0) {
         throw std::runtime_error("TernaryEMatrix::rightMatMult: uninitialized matrix");
