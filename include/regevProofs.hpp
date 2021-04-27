@@ -324,11 +324,10 @@ void verifyEncryption(VerifierData& vd, // vd has all the commitments
 
 
 
+/****** utility functions *******/
 
-
-
-
-/****** Internal functions, decleared here mostly for unit testing *******/
+// compute the vector (1,x,x^2,...,x^{len-1})
+void powerVector(ALGEBRA::EVector& vec, const ALGEBRA::Element& x, int len);
 
 // Commit to a slice of the vector
 Point commit(const ALGEBRA::SVector& v, size_t genIdx,
