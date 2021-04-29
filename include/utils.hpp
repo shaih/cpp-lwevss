@@ -23,6 +23,8 @@
  * ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
  * OTHER DEALINGS IN THE SOFTWARE.
  **/
+#include <iostream>
+#include <set>
 #include "algebra.hpp"
 
 namespace ALGEBRA {
@@ -36,5 +38,17 @@ TwoSqrts decomposeProbablePrime(BigInt p);
 FourSqrts decompose4(BigInt n);
 
 inline int ceilDiv(int a, int b) { return (a+b-1)/b;}
-} // end of namespace UTILS
+
+inline std::set<int> interval(int from, int to) {
+    std::set<int> intSet;
+    for (int i=from; i<to; i++) intSet.insert(intSet.end(), i);
+    return intSet;
+}
+} // end of namespace ALGEBRA
+
+inline std::ostream& operator<<(std::ostream& st, const std::set<int>& intSet){
+    st << '{';
+    for (auto i: intSet) st << i << ' ';
+    return st << '}';
+}
 #endif // ifndef _UTILS_HPP_

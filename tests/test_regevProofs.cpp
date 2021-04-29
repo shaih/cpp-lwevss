@@ -4,6 +4,7 @@
 #include <NTL/mat_ZZ.h>
 
 #include "tests.hpp" // define strings LWEVSS_TESTS::passed and LWEVSS_TESTS::failed
+#include "utils.hpp"
 #include "regevProofs.hpp"
 
 using namespace std;
@@ -197,7 +198,8 @@ bool test_proofs() {
     TernaryEMatrix::init();
     MerlinRegev mer;
     PedersenContext ped;
-    VerifierData vd(gpk, ped, mer);
+    SharingParams ssp(interval(1,gpk.enn+1), gpk.tee);
+    VerifierData vd(gpk, ped, mer, ssp);
     ProverData pd(vd);
 
     // Generate/verify the proofs by the second party (idx=1)
@@ -215,34 +217,42 @@ bool test_proofs() {
 
     // encryption
     std::vector<ALGEBRA::SVector> ptxt1(gpk.enn);
-    std::vector<GlobalKey::CtxtPair> ctxt(gpk.enn);
-    std::vector<ALGEBRA::EVector> encRnd(gpk.enn);
-    std::vector<ALGEBRA::EVector> encNoise(gpk.enn);
+    std::vector<GlobalKey::CtxtPair> ctxt1(gpk.enn);
+    // secret sharing of a random value , the secret itself is sshr[0]
+    ALGEBRA::SVector sshr;
+    ssp.randomSharing(sshr);
     for (int i=0; i<gpk.enn; i++) {
-        resize(ptxt1[i],gpk.enn);
-        for (auto& p: ptxt1[i]) conv(p,i); //randomizeScalar(p);
-        ctxt[i] = gpk.encrypt(ptxt1[i], encRnd[i], encNoise[i]);
+        resize(ptxt1[i], gpk.enn);
+        for (int j=0; j<gpk.enn; j++) ptxt1[i][j] = sshr[i+1];
+        ctxt1[i] = gpk.encrypt(ptxt1[i]);
     }
 
     // decryption at party #1
     ALGEBRA::SVector ptxt2;    resize(ptxt2, gpk.tee);
     ALGEBRA::EVector decNoise; resize(decNoise, gpk.tee);
     for (int i=0; i<gpk.tee; i++) { // decrypt 2nd entry in i'th ctxt
-        ptxt2[i] = gpk.decrypt(sk[partyIdx], partyIdx, ctxt[i], &(decNoise[i]));
+        ptxt2[i] = gpk.decrypt(sk[partyIdx], partyIdx, ctxt1[i], &(decNoise[i]));
         if (ptxt2[i] != ptxt1[i][partyIdx])
             return false;
     }
+
+    // re-encryption at party #1
+    ALGEBRA::SVector ptxt3;
+    resize(ptxt3, gpk.enn);
+    for (int j=0; j<gpk.enn; j++) ptxt3[j] = sshr[j+1];
+    ALGEBRA::EVector encRnd;
+    ALGEBRA::EVector encNoise;
+    auto ctxt2 = gpk.encrypt(ptxt3, encRnd, encNoise);
 
     // Copy the first t ciphertexts into a k x t matrix and another t-vector
     EMatrix ctxtMat;
     resize(ctxtMat, gpk.kay, gpk.tee);
     EVector ctxtVec;
     resize(ctxtVec, gpk.tee);
-
     for (int i=0; i<gpk.tee; i++) {
         for (int j=0; j<gpk.kay; j++)
-            ctxtMat[j][i] = ctxt[i].first[j];
-        ctxtVec[i] = ctxt[i].second[partyIdx];
+            ctxtMat[j][i] = ctxt1[i].first[j];
+        ctxtVec[i] = ctxt1[i].second[partyIdx];
     }
 
     // prepare for proof, pad the secret key to exact norm and commit to it
@@ -258,9 +268,10 @@ bool test_proofs() {
     vd.sk1PadCom[1] = commit(sk[partyIdx], vd.sk1PadIdx, vd.Hs, pd.sk1PadRnd[1], origSize);
 
     proveDecryption(pd, ptxt2, decNoise, ctxtMat, ctxtVec);
-    proveEncryption(pd, ptxt1[partyIdx], encRnd[partyIdx], encNoise[partyIdx],
-                    ctxt[partyIdx].first,  ctxt[partyIdx].second);
-
+    proveEncryption(pd, ptxt3, encRnd, encNoise, ctxt2.first, ctxt2.second);
+    proveKeyGen(pd, sk[partyIdx], kgNoise[partyIdx], partyIdx);
+    proveReShare(pd, interval(1,gpk.tee+1));
+    proveSmallness(pd);
     return true;
 }
 

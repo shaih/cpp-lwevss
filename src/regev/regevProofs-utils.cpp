@@ -31,10 +31,12 @@ using CRV25519::Point, DLPROOFS::PedersenContext,
     DLPROOFS::MerlinBPctx, DLPROOFS::LinConstraint, DLPROOFS::QuadConstraint;
 // NOTE: REGEVENC::Scalar is not the same as CRV25519::Scalar
 
-VerifierData::VerifierData(GlobalKey& g, PedersenContext& p, MerlinRegev& m) {
+VerifierData::VerifierData(GlobalKey& g, PedersenContext& p,
+                           MerlinRegev& m, const SharingParams& _sp) {
     gk = &g;
     ped = &p;
     mer = &m;
+    sp = (SharingParams*) &_sp;
 
     // FIXME: compute the nounds from the gk parameters
 
@@ -43,21 +45,22 @@ VerifierData::VerifierData(GlobalKey& g, PedersenContext& p, MerlinRegev& m) {
     B_encRnd = BigInt(1)<<10;    // bounds the encryption randomness size
     B_encNoise = BigInt(1)<<10;  // bounds the size of the encryption noise
     B_kGenNoise = BigInt(1)<<10; // bounds the size of the keygen noise
-    B_smallness = BigInt(1)<<10;// Used in the approximate smallness protocol
+    B_smallness = BigInt(1)<<smlnsBits; // Used in the smallness proof
+        // smlnsBits is defined in regevProofs.hpp (20 for debugging)
 
     setIndexes(); // compute al the indexes into the G,H arrays
     computeGenerators();   // compute the generators themselves
 
-    // Allocate empty constraints. For each one of Decryption, Re-sharing,
-    // Encryption, and KeyGen, we have linear constraints over GF(p^ell)).
-    // In addition we have one more Z_p linear constraint fot the proof of
-    // approximate smallness.
-    linConstr.resize(4*scalarsPerElement() +1);
+    // Allocate empty constraints. For each of Decryption, Encryption,
+    // KeyGen, and approximate smallness, we have one linear constraints
+    // over GF(p^ell)). In addition, we have n+1-t linear constraints
+    // over Z_p for the proof of correct re-sharing
+    linConstr.resize(4*scalarsPerElement() + g.enn-g.tee+1);
     decLinCnstr = &(linConstr[0]);
     encLinCnstr = &(linConstr[scalarsPerElement()]);
     kGenLinCnstr = &(linConstr[2*scalarsPerElement()]);
-    reShrLinCnstr= &(linConstr[3*scalarsPerElement()]);
-    smlnsLinCnstr = &(linConstr[4*scalarsPerElement()]);
+    smlnsLinCnstr = &(linConstr[3*scalarsPerElement()]);
+    reShrLinCnstr= &(linConstr[4*scalarsPerElement()]);
 
     // Then we have nDecSubvectors norm constraints for the subvectors of
     // the decryption noise, and one more norm constraint for each of the
@@ -294,6 +297,12 @@ void setEqsTo(LinConstraint* constrs, const ALGEBRA::Element& e) {
 }
 
 // compute the vector (1,x,x^2,...,x^{len-1})
+void powerVector(SVector& vec, const Scalar& x, int len) {
+    resize(vec, len);
+    conv(vec[0], 1);
+    for (int i=1; i<vec.length(); i++)
+        vec[i] = vec[i-1] * x;
+}
 void powerVector(EVector& vec, const Element& x, int len) {
     resize(vec, len);
     conv(vec[0], 1);

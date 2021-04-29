@@ -1,6 +1,6 @@
 #ifndef _PEDERSEN_HPP_
 #define _PEDERSEN_HPP_
-/* cpedersen.hpp - Pedersen commitments
+/* ceddersen.hpp - Pedersen commitments
  * 
  * Copyright (C) 2021, LWE-PVSS
  *

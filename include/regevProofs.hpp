@@ -35,10 +35,11 @@
 #include "ternaryMatrix.hpp"
 #include "merlin.hpp"
 #include "pedersen.hpp"
+#include "shamir.hpp"
 #include "bulletproof.hpp"
 
 namespace REGEVENC {
-using CRV25519::Point, DLPROOFS::PedersenContext,
+using CRV25519::Point, DLPROOFS::PedersenContext, TOOLS::SharingParams,
     DLPROOFS::MerlinBPctx, DLPROOFS::LinConstraint, DLPROOFS::QuadConstraint;
 // NOTE: REGEVENC::Scalar is not the same as CRV25519::Scalar
 
@@ -116,7 +117,10 @@ struct MerlinRegev: public MerlinBPctx {
     }
     // a challenge n-by-m trenary matrix
     void newTernaryMatrix(const std::string& label,
-                          ALGEBRA::TernaryMatrix& R, size_t n, size_t m) {
+                          ALGEBRA::TernaryMatrix& R, size_t n=0, size_t m=0) {
+        if (n<=0) n = R.NumRows();
+        if (m<=0) m = R.NumCols();
+        if (n==0 || m==0) return; // nothing to do
         size_t bufSize = (n*m +3)/4; // two bits per element
         unsigned char buf[bufSize];
         merlin_transcript_challenge_bytes(&mctx,
@@ -124,7 +128,10 @@ struct MerlinRegev: public MerlinBPctx {
         R.setFromBytes(buf, n, m);
     }
     void newTernaryEMatrix(const std::string& label,
-                          ALGEBRA::TernaryEMatrix& R, size_t n, size_t m) {
+                          ALGEBRA::TernaryEMatrix& R, size_t n=0, size_t m=0) {
+        if (n<=0) n = R.NumRows();
+        if (m<=0) m = R.NumCols();
+        if (n==0 || m==0) return; // nothing to do
         size_t bufSize = ALGEBRA::scalarsPerElement()*((n*m +3)/4); // two bits per element
         unsigned char buf[bufSize];
         merlin_transcript_challenge_bytes(&mctx,
@@ -150,6 +157,8 @@ struct MerlinRegev: public MerlinBPctx {
     }
 };
 
+inline constexpr int smlnsBits = 20; // The bitsize of B_smallness below
+
 // A stucture for holding all the public data that both the prover and
 // the verifier knows. The prover will fill in the commitments, both
 // can use them to derive the various challenges in the proof prootcols.
@@ -159,6 +168,7 @@ struct VerifierData {
     GlobalKey *gk;        // global Regev key
     PedersenContext *ped; // Pedersen commitment context
     MerlinRegev *mer;     // Merlin transcript context
+    SharingParams *sp;    // parameters of Shamir sharing
 
     // The various public size bounds
     ALGEBRA::BigInt B_decNoise;// bounds each sub-vector of decryption noise
@@ -204,6 +214,8 @@ struct VerifierData {
     DLPROOFS::LinConstraint *decLinCnstr, *encLinCnstr, *kGenLinCnstr, *reShrLinCnstr, *smlnsLinCnstr;
     DLPROOFS::QuadConstraint *rQuadCnstr, *encErrQuadCnstr, *skQuadCnstr, *kgErrQuadCnstr;
 
+    ALGEBRA::EVector z; // the masked vector z from the proof of smallness
+
     // Set the indexes to their default values
     void setIndexes();
     void computeGenerators();
@@ -236,7 +248,8 @@ struct VerifierData {
     }
 
     VerifierData() = default;
-    VerifierData(GlobalKey& gk, PedersenContext& ped, MerlinRegev& mer);
+    VerifierData(GlobalKey& gk, PedersenContext& ped, MerlinRegev& mer,
+                 const SharingParams& sp);
 };
 
 // For each commitment in the VerifierData, the ProverData must hold
@@ -250,7 +263,7 @@ struct ProverData {
     // The plaintext and the y vector have just one commitment each.
     std::vector<TwoScalars> decErrRnd, decErrPadRnd;
     TwoScalars sk1Rnd, sk1PadRnd, rRnd, rPadRnd, encErrRnd,
-        encErrPadRnd, sk2Rnd1, sk2PadRnd, kGenErrRnd, kGenErrPadRnd;
+        encErrPadRnd, sk2Rnd, sk2PadRnd, kGenErrRnd, kGenErrPadRnd;
     CRV25519::Scalar pt1Rnd, pt2Rnd, yRnd;
 
     // committed values: all except pt1, pt2, y consist of the original
@@ -259,29 +272,32 @@ struct ProverData {
     // we allocate separate EVectors to hold them.
 
     ALGEBRA::EVector *sk1, *decErr, *r, *sk2;
-    ALGEBRA::SVector *pt1, *pt2, *y;
+    ALGEBRA::SVector *pt1, *pt2;
 
     ALGEBRA::EVector sk1Padding, decErrPadding, rPadding, 
-        encErr, encErrPadding, sk2Padding, kGenErr, kGenErrPadding;
+        encErr, encErrPadding, sk2Padding, kGenErr, kGenErrPadding, y;
 
     // Reset when preparing for a new proof at the prover's site
     void prepareForNextProof() {
         vd->prepareForNextProof(); // reset the public data
-        sk1Rnd = sk2Rnd1; // randomness of commitment to secret key
+        sk1Rnd = sk2Rnd; // randomness of commitment to secret key
         sk1PadRnd = sk2PadRnd;
-        sk1 = sk2;         // the secret key itself
+        sk1 = sk2;       // the secret key itself
         std::swap(sk1Padding, sk2Padding);
 
         // zero-out everything else
         TwoScalars empty2scalars;
         decErrRnd.assign(vd->nDecSubvectors, empty2scalars);
         decErrPadRnd.assign(vd->nDecSubvectors, empty2scalars);
-        rRnd =rPadRnd =encErrRnd =encErrPadRnd =sk2Rnd1
+        rRnd =rPadRnd =encErrRnd =encErrPadRnd =sk2Rnd
             =sk2PadRnd =kGenErrRnd =kGenErrPadRnd =empty2scalars;
         pt1Rnd =pt2Rnd =yRnd = CRV25519::Scalar();
 
         decErr = r = sk2 = nullptr;
-        pt1 = pt2 = y = nullptr;
+        pt1 = pt2 = nullptr;
+        clear(sk1Padding); clear(decErrPadding);  clear(rPadding);
+        clear(encErr);     clear(encErrPadding);  clear(sk2Padding);
+        clear(kGenErr);    clear(kGenErrPadding); clear(y);
     }
 
     ProverData() = default;    
@@ -308,16 +324,33 @@ void proveDecryption(ProverData& pd, const ALGEBRA::SVector& ptxt,
         const ALGEBRA::EVector& ctVec);
 
 void verifyDecryption(VerifierData& vd, // vd has all the commitments
-    const ALGEBRA::EMatrix& ctMat, const ALGEBRA::EVector& ctVec);
+        const ALGEBRA::EMatrix& ctMat, const ALGEBRA::EVector& ctVec);
 
-// Proof of encryption. We assume that the ProverData,VerifierData are
-// already initialized.
+// Proof of encryption
 void proveEncryption(ProverData& pd, const ALGEBRA::SVector& ptxt,
         const ALGEBRA::EVector& rnd, const ALGEBRA::EVector& noise,
         const ALGEBRA::EVector& ct1, const ALGEBRA::EVector& ct2);
 
-void verifyEncryption(VerifierData& vd, // vd has all the commitments
+void verifyEncryption(VerifierData& vd,
         const ALGEBRA::EVector& ct1, const ALGEBRA::EVector& ct2);
+
+// Proof of key-generation. pkNum is index of the pkey in the GlobalKey
+void proveKeyGen(ProverData& pd, const ALGEBRA::EVector& sk,
+        const ALGEBRA::EVector& noise, int pkNum);
+
+void verifyKeyGen(VerifierData& vd, int pkNum);
+
+// Proof of correct re-sharing. It is assumed that pt1, pt2
+// are already initialized in the ps structure
+void proveReShare(ProverData& pd, const TOOLS::EvalSet& recSet);
+
+void verifyKeyGen(VerifierData& vd, const TOOLS::EvalSet& recSet);
+
+// Proof of approximate smallness (of all except the plaintext variables)
+void proveSmallness(ProverData& pd);
+
+void verifySmallness(VerifierData& vd);
+
 
 
 
@@ -327,6 +360,7 @@ void verifyEncryption(VerifierData& vd, // vd has all the commitments
 /****** utility functions *******/
 
 // compute the vector (1,x,x^2,...,x^{len-1})
+void powerVector(ALGEBRA::SVector& vec, const ALGEBRA::Scalar& x, int len);
 void powerVector(ALGEBRA::EVector& vec, const ALGEBRA::Element& x, int len);
 
 // Commit to a slice of the vector
@@ -373,70 +407,27 @@ void setEqsTo(LinConstraint* constrs, const ALGEBRA::Element& e);
 
 // Useful routines for printing ZZ_p's with small magnitude
 
-inline ALGEBRA::BigInt pretty(const ALGEBRA::Scalar& s) {
-    static auto Pover2 = GlobalKey::P()/2;
-    if (rep(s) > Pover2)
-        return rep(s)-GlobalKey::P();
-    else
-        return rep(s);
-}
-inline ALGEBRA::BigInt pretty(const CRV25519::Scalar& s) {
+inline ALGEBRA::BigInt balanced(const CRV25519::Scalar& s) {
     ALGEBRA::Scalar as;
     conv(as,s);
-    return pretty(as);
+    return ALGEBRA::balanced(as);
 }
-inline ALGEBRA::BIVector pretty(const ALGEBRA::SVector& sv) {
-    ALGEBRA::BIVector bv; ALGEBRA::resize(bv, sv.length());
-    for (int i=0; i<sv.length(); i++)
-        bv[i] = pretty(sv[i]);
-    return bv;
-}
-inline ALGEBRA::BIVector pretty(const ALGEBRA::Element& e) {
-    ALGEBRA::SVector sv; ALGEBRA::conv(sv, e);
-    return pretty(sv);
-}
-inline NTL::Vec<ALGEBRA::BIVector> pretty(const ALGEBRA::EVector& ev) {
-    NTL::Vec<ALGEBRA::BIVector> vbv;
-    vbv.SetLength(ev.length());
-    for (int i=0; i<ev.length(); i++)
-        vbv[i] = pretty(ev[i]);
-    return vbv;
-}
-inline NTL::mat_ZZ pretty(ALGEBRA::SMatrix& sm) {
-    static auto Pover2 = GlobalKey::P()/2;
-    NTL::mat_ZZ mat;
-    conv(mat, sm);
-    for (int i=0; i<mat.NumRows(); i++) for (int j=0; j<mat.NumCols(); j++) {
-        if (mat[i][j]>Pover2)
-            mat[i][j] -= GlobalKey::P();
-    }
-    return mat;
-}
-inline NTL::Mat<ALGEBRA::BIVector> pretty(const ALGEBRA::EMatrix& emat) {
-    NTL::Mat<ALGEBRA::BIVector> mbv;
-    mbv.SetDims(emat.NumRows(), emat.NumCols());
-    for (int i=0; i<mbv.NumRows(); i++) for (int j=0; j<mbv.NumCols(); j++) {
-        mbv[i][j] = pretty(emat[i][j]);
-    }
-    return mbv;
-}
-
 
 inline std::ostream& prettyPrint(std::ostream& st, const DLPROOFS::PtxtVec& v) {
     st << "[";
     for (auto& x : v) {
-        st << x.first << "->" << pretty(x.second) << ", ";
+        st << x.first << "->" << balanced(x.second) << ", ";
     }
     return (st << "]");
 }
 inline std::ostream& prettyPrint(std::ostream& st, const DLPROOFS::LinConstraint& c) {
-    prettyPrint(st<<"{", c.terms) << ", " << pretty(c.equalsTo) << "}";
+    prettyPrint(st<<"{", c.terms) << ", " << balanced(c.equalsTo) << "}";
     return st;
 }
 inline std::ostream& prettyPrint(std::ostream& st, const DLPROOFS::QuadConstraint& c) {
     st<<"{[";
     for (auto i : c.indexes) { st << i<< " "; }
-    st << "], " << pretty(c.equalsTo) << "}";
+    st << "], " << balanced(c.equalsTo) << "}";
     return st;
 }
 

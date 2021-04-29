@@ -23,6 +23,7 @@
  * OTHER DEALINGS IN THE SOFTWARE.
  **/
 #include <NTL/ZZ.h>
+#include <NTL/mat_ZZ.h>
 #include <NTL/mat_ZZ_pE.h>
 
 /* This header provides copmatibility with NTL, inside the ALGEBRA namespace.
@@ -44,6 +45,7 @@ namespace ALGEBRA {
 // in liue of "using X as Y", bring the relevant NTL types to this namespace
 typedef NTL::ZZ BigInt;
 typedef NTL::ZZ_p Scalar;
+typedef NTL::ZZ_pX SPoly;
 typedef NTL::ZZ_pE Element;
 typedef NTL::vec_ZZ BIVector;
 typedef NTL::vec_ZZ_p SVector;
@@ -187,6 +189,52 @@ inline void initRandomness(const std::string& st) {
 }
 
 // Debugging helpers
+
+inline BigInt balanced(const Scalar& s) {
+    static auto Pover2 = NTL::ZZ_p::modulus()/2;
+    if (rep(s) > Pover2)
+        return rep(s)-NTL::ZZ_p::modulus();
+    else
+        return rep(s);
+}
+inline BIVector balanced(const SVector& sv) {
+    BIVector bv; resize(bv, sv.length());
+    for (int i=0; i<sv.length(); i++)
+        bv[i] = balanced(sv[i]);
+    return bv;
+}
+inline BIVector balanced(const Element& e) {
+    SVector sv; conv(sv, e);
+    return balanced(sv);
+}
+inline NTL::Vec<BIVector> balanced(const EVector& ev) {
+    NTL::Vec<BIVector> vbv;
+    vbv.SetLength(ev.length());
+    for (int i=0; i<ev.length(); i++)
+        vbv[i] = balanced(ev[i]);
+    return vbv;
+}
+inline NTL::mat_ZZ balanced(const SMatrix& sm) {
+    static auto Pover2 = NTL::ZZ_p::modulus()/2;
+    NTL::mat_ZZ mat;
+    conv(mat, sm);
+    for (int i=0; i<mat.NumRows(); i++) for (int j=0; j<mat.NumCols(); j++) {
+        if (mat[i][j]>Pover2)
+            mat[i][j] -= NTL::ZZ_p::modulus();
+    }
+    return mat;
+}
+inline NTL::Mat<BIVector> balanced(const EMatrix& emat) {
+    NTL::Mat<BIVector> mbv;
+    mbv.SetDims(emat.NumRows(), emat.NumCols());
+    for (int i=0; i<mbv.NumRows(); i++) for (int j=0; j<mbv.NumCols(); j++) {
+        mbv[i][j] = balanced(emat[i][j]);
+    }
+    return mbv;
+}
+
+
+
 inline std::ostream& printScalar(std::ostream& st, const Scalar& sc) {
     BigInt szz(NTL::INIT_SIZE,4);
     conv(szz,sc);
