@@ -97,6 +97,8 @@
 
 namespace DLPROOFS { // FIXME: what namespace should we use here?
 
+extern CRV25519::Scalar dbgSum;
+
 using CRV25519::Scalar;
 typedef std::map<size_t,Scalar> PtxtVec;
 

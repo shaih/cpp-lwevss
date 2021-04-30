@@ -194,7 +194,7 @@ bool test_constraints() {
 }
 
 bool test_proofs() {
-    GlobalKey gpk("testContext", /*k*/3, /*m*/2, /*n*/5);
+    GlobalKey gpk("testContext", /*k*/7, /*m*/6, /*n*/5);
     TernaryEMatrix::init();
     MerlinRegev mer;
     PedersenContext ped;

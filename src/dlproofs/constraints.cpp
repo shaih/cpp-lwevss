@@ -29,6 +29,8 @@
 
 namespace DLPROOFS {
 
+CRV25519::Scalar dbgSum;
+
 // A class for comparing iterators from different constraints, to be
 // used with std::priority_queue
 class CompIter {
@@ -273,6 +275,7 @@ bool checkConstraintLoose(const LinConstraint& cnstr, const PtxtVec& witness)
         }
         ++it1;
     }
+    if (sum != cnstr.equalsTo) dbgSum = sum;
     return (sum == cnstr.equalsTo);
 }
 
@@ -308,6 +311,7 @@ bool checkConstraintLoose(const QuadConstraint& cnstr,
         sum += xit->second * yit->second;
         ++it;
     }
+    if (sum != cnstr.equalsTo) dbgSum = sum;
     return (sum == cnstr.equalsTo);
 }
 

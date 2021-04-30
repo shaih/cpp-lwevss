@@ -56,7 +56,7 @@ inline constexpr int JLDIM = 256;    // Target dimension of Johnson–Lindenstra
 inline constexpr int LINYDIM=128;    // Target dimension in approximate l-infty proofs
 #else
 inline constexpr int DEC_ERRV_SZ=2;
-inline constexpr int JLDIM = 4;
+inline constexpr int JLDIM = 8;
 inline constexpr int LINYDIM=4;
 #endif
 inline void conv(CRV25519::Scalar& to, const ALGEBRA::BigInt& from) {

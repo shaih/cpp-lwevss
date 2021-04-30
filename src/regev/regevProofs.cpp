@@ -120,6 +120,7 @@ void proveDecryption(ProverData& pd, const SVector& ptxt,
 #else
     Element x = vd.mer->newElement("RegevDec");
 #endif
+    assert(ptxt.length()==vd.gk->tee);
     EVector xvec;
     powerVector(xvec, x, ptxt.length()); // the vector xvec=(1,x,x^2,...)
 
@@ -203,8 +204,7 @@ void proveDecryption(ProverData& pd, const SVector& ptxt,
 #endif
 
     // Constraints for <ptxt,g*xvec>, where ptxt is a Z_p vector, not GF(p^e)
-    xvec *= vd.gk->g(); // g*xvec
-    makeConstraints(&(vd.linConstr[0]), vd.pt1Idx, xvec);
+    makeConstraints(&(vd.linConstr[0]), vd.pt1Idx, xvec*vd.gk->g());
 #ifdef DEBUGGING
     sum += innerProduct(ptxt, xvec2);
     setEqsTo(&(vd.linConstr[0]), sum);
@@ -253,6 +253,69 @@ void proveDecryption(ProverData& pd, const SVector& ptxt,
         }
     }
 #endif
+}
+
+// Prepare the constrints fo the proof of decryption, at the verifier's site.
+// We assume that the ProverData,VerifierData contains all teh commitments.
+void verifyDecryption(VerifierData& vd, // vd has all the commitments
+        const ALGEBRA::EMatrix& ctMat, const ALGEBRA::EVector& ctVec)
+{
+    // commitment to decrypted plaintext
+    vd.mer->processPoint("RegevDecPtxt", vd.pt1Com);
+
+    // include the commitments to noise,padding in the Merlin transcript
+    for (int i=0; i<vd.nDecSubvectors; i++) {
+        auto& com2Noise = vd.decErrCom[i];
+        auto& com2Pad = vd.decErrPadCom[i];
+        vd.mer->processPoint("RegevDecNoise"+std::to_string(i), com2Noise[0]);
+        vd.mer->processPoint(std::string(), com2Noise[1]);
+        vd.mer->processPoint(std::string(), com2Pad[0]);
+        vd.mer->processPoint(std::string(), com2Pad[1]);
+    }
+    // A challenge scalar x, defines the vector xvec=(1,x,x^2,...)
+    Element x = vd.mer->newElement("RegevDec");
+    EVector xvec;
+    powerVector(xvec, x, vd.gk->tee); // the vector xvec=(1,x,x^2,...)
+
+    // Record the linear constraints
+    //            <sk,ctMat*xvec> +<ptxt,g*xvec> +<noise,xvec> = <ctVec,xvec>
+
+    // The element <ctVec,cvec>
+    setEqsTo(&(vd.linConstr[0]), innerProduct(ctVec, xvec));
+
+    // expand <sk,ctMat*xvec> 
+    EVector yvec = ctMat * xvec;
+    expandConstraints(&(vd.linConstr[0]), vd.sk1Idx, yvec);
+
+    // Expand <noise,xvec>
+    expandConstraints(&(vd.linConstr[0]), vd.decErrIdx, xvec);
+
+    // Constraints for <ptxt,g*xvec>, where ptxt is a Z_p vector, not GF(p^e)
+    makeConstraints(&(vd.linConstr[0]), vd.pt1Idx, xvec * vd.gk->g());
+
+    // Record the norm constraints |paddedNoise[i]|^2 =B_decNoise^2 forall i
+    // The indexes for each of them are set as follows: all the sub-vectors
+    // together make the two intervals: 
+    //  - for the vectors themselves [decErrIdx1, decErrIdx1+decErrLen1-1]
+    //  - for the padding            [decErrIdx2, decErrIdx2+decErrLen2-1]
+    // Each sub-vector has one slice from from each interval, of sizes
+    // DEC_ERRV_SZ = decErrLen1/nDecSubvectors for the vectors, and
+    // PAD_SIZE = decErrLen2/nDecSubvectors for the padding.
+
+    auto normSquared = vd.B_decNoise*vd.B_decNoise;
+    for (int i=0; i<vd.nDecSubvectors; i++) { // go over the sub-vectors
+        int start1 = vd.decErrIdx + i*DEC_ERRV_SZ;
+        int start2 = vd.decErrPadIdx + i*PAD_SIZE;
+
+        auto& normConstr = vd.normConstr[i];
+        for (int j=0; j<DEC_ERRV_SZ; j++)
+            normConstr.indexes.insert(normConstr.indexes.end(), start1+j);
+        for (int j=0; j<PAD_SIZE; j++)
+            normConstr.indexes.insert(normConstr.indexes.end(), start2+j);
+
+        // Records the norm-squared itself
+        conv(normConstr.equalsTo, normSquared); // convert to CRV25519::Scalar
+    }
 }
 
 // Proof of encryption. We assume that the ProverData,VerifierData are
@@ -665,128 +728,80 @@ void proveReShare(ProverData& pd, const TOOLS::EvalSet& recSet) {
 #endif
 }
 
-struct SmallnessRs {
-    TernaryEMatrix skR, skPadR, kgErrR, kgErrPadR, encRndR, encRndPadR,
-                encErrR, encErrPadR, decErrR, decErrPadR;
 
-    SmallnessRs(const ProverData& pd) {
-        int nRows = LINYDIM/scalarsPerElement();
-        int nPaddingElems = PAD_SIZE/scalarsPerElement();
+static EVector concatSecrets(const ProverData& pd, std::vector<int>& idxMap) {
+    VerifierData& vd = *(pd.vd);
+    int totalLen = pd.sk2->length() +pd.sk2Padding.length()
+            + pd.kGenErr.length()   +pd.kGenErrPadding.length()
+            + pd.r->length()        +pd.rPadding.length()
+            + pd.encErr.length()    +pd.encErrPadding.length()
+            + pd.decErr->length()   +pd.decErrPadding.length();
+    idxMap.resize(totalLen);
 
-        skR.resize(pd.sk2->length(), nRows);
-        skPadR.resize(nPaddingElems, nRows);
+    EVector v;
+    v.SetMaxLength(totalLen); // reserve memory
+    int start = 0;
 
-        kgErrR.resize(pd.kGenErr.length(), nRows);
-        kgErrPadR.resize(nPaddingElems, nRows);
+    v.append(*pd.sk2);
+    for (int i=start; i<v.length(); i++)
+        idxMap[i] = vd.sk2Idx + (i-start)*scalarsPerElement();
+    start = v.length();
 
-        encRndR.resize(pd.r->length(), nRows);
-        encRndPadR.resize(nPaddingElems, nRows);
+    v.append(pd.sk2Padding);
+    for (int i=start; i<v.length(); i++)
+        idxMap[i] = vd.sk2PadIdx + (i-start)*scalarsPerElement();
+    start = v.length();
 
-        encErrR.resize(pd.encErr.length(), nRows);
-        encErrPadR.resize(nPaddingElems, nRows);
+    v.append(pd.kGenErr);
+    for (int i=start; i<v.length(); i++)
+        idxMap[i] = vd.kGenErrIdx + (i-start)*scalarsPerElement();
+    start = v.length();
 
-        decErrR.resize(pd.decErr->length(), nRows);
-        decErrPadR.resize(pd.decErrPadding.length(), nRows);
-    }
-    void makeChallenge(MerlinRegev& mr) {
-        mr.newTernaryEMatrix("shortSK", skR);
-        mr.newTernaryEMatrix("shortSKPad", skPadR);
-        mr.newTernaryEMatrix("shortKGerr", kgErrR);
-        mr.newTernaryEMatrix("shortKGerrPad", kgErrPadR);
-        mr.newTernaryEMatrix("shortEncRnd", encRndR);
-        mr.newTernaryEMatrix("shortEncRndPad", encRndPadR);
-        mr.newTernaryEMatrix("shortEncErr", encErrR);
-        mr.newTernaryEMatrix("shortEncErrPad", encErrPadR);
-        mr.newTernaryEMatrix("shortDecErr", decErrR);
-        mr.newTernaryEMatrix("shortDecErrPad", decErrPadR);
-    }
-    // Copmute (concatenated-variables) * R
-    EVector compressVecs(const ProverData& pd) {
-        EVector ret = (*pd.sk2) * skR;
-        ret += pd.sk2Padding * skPadR;
-        ret += pd.kGenErr * kgErrR;
-        ret += pd.kGenErrPadding * kgErrPadR;
-        ret += (*pd.r) * encRndR;
-        ret += pd.rPadding * encRndPadR;
-        ret += pd.encErr * encErrR;
-        ret += pd.encErrPadding * encErrPadR;
-        ret += (*pd.decErr) * decErrR;
-        ret += pd.decErrPadding * decErrPadR;
-        return ret;
-    }
-    // Compute R * vec
-    EVector operator*(const EVector& v) {
-        int len = skR.NumRows() +kgErrR.NumRows() +encRndR.NumRows()
-            +encErrR.NumRows() +decErrR.NumRows() +decErrPadR.NumRows()
-            +4*PAD_SIZE/scalarsPerElement();
-        EVector ret; ret.SetMaxLength(len); // allocate space
-        ret.append(skR*v);
-        ret.append(skPadR*v);
-        ret.append(kgErrR*v);
-        ret.append(kgErrPadR*v);
-        ret.append(encRndR*v);
-        ret.append(encRndPadR*v);
-        ret.append(encErrR*v);
-        ret.append(encErrPadR*v);
-        ret.append(decErrR*v);
-        ret.append(decErrPadR*v);
-        return ret;
-    }
+    v.append(pd.kGenErrPadding);
+    for (int i=start; i<v.length(); i++)
+        idxMap[i] = vd.kGenErrPadIdx + (i-start)*scalarsPerElement();
+    start = v.length();
 
-    // methods below are useful for debugging
+    v.append(*pd.r);
+    for (int i=start; i<v.length(); i++)
+        idxMap[i] = vd.rIdx + (i-start)*scalarsPerElement();
+    start = v.length();
 
-    // inner-product between the concatenated variables and v
-    Element innerProduct(const ProverData& pd, const EVector &v) {
-        assert(v.length() == skR.NumRows() +kgErrR.NumRows() +encRndR.NumRows()
-            +encErrR.NumRows() +decErrR.NumRows() +decErrPadR.NumRows()
-            +4*PAD_SIZE/scalarsPerElement());
+    v.append(pd.rPadding);
+    for (int i=start; i<v.length(); i++)
+        idxMap[i] = vd.rPadIdx + (i-start)*scalarsPerElement();
+    start = v.length();
 
-        int offset = 0;
-        Element tmp, sum;
-        NTL::InnerProduct(sum, v, *pd.sk2, offset);
-        offset += pd.sk2->length();
+    v.append(pd.encErr);
+    for (int i=start; i<v.length(); i++)
+        idxMap[i] = vd.encErrIdx + (i-start)*scalarsPerElement();
+    start = v.length();
 
-        NTL::InnerProduct(tmp, v, pd.sk2Padding, offset);
-        sum += tmp;
-        offset += pd.sk2Padding.length();
+    v.append(pd.encErrPadding);
+    for (int i=start; i<v.length(); i++)
+        idxMap[i] = vd.encErrPadIdx + (i-start)*scalarsPerElement();
+    start = v.length();
 
-        NTL::InnerProduct(tmp, v, pd.kGenErr, offset);
-        sum += tmp;
-        offset += pd.kGenErr.length();
+    v.append(*pd.decErr);
+    for (int i=start; i<v.length(); i++)
+        idxMap[i] = vd.decErrIdx + (i-start)*scalarsPerElement();
+    start = v.length();
 
-        NTL::InnerProduct(tmp, v, pd.kGenErrPadding, offset);
-        sum += tmp;
-        offset += pd.kGenErrPadding.length();
+    v.append(pd.decErrPadding);
+    for (int i=start; i<v.length(); i++)
+        idxMap[i] = vd.decErrPadIdx + (i-start)*scalarsPerElement();
 
-        NTL::InnerProduct(tmp, v, *pd.r, offset);
-        sum += tmp;
-        offset += pd.r->length();
+    assert(v.length()==totalLen);
+    return v;
+}
 
-        NTL::InnerProduct(tmp, v, pd.rPadding, offset);
-        sum += tmp;
-        offset += pd.rPadding.length();
-
-        NTL::InnerProduct(tmp, v, pd.encErr, offset);
-        sum += tmp;
-        offset += pd.encErr.length();
-
-        NTL::InnerProduct(tmp, v, pd.encErrPadding, offset);
-        sum += tmp;
-        offset += pd.encErrPadding.length();
-
-        NTL::InnerProduct(tmp, v, *pd.decErr, offset);
-        sum += tmp;
-        offset += pd.decErr->length();
-
-        NTL::InnerProduct(tmp, v, pd.decErrPadding, offset);
-        sum += tmp;
-        return sum;
-    }
-};
 
 void proveSmallness(ProverData& pd) {
     VerifierData& vd = *(pd.vd);
-    SmallnessRs R(pd); // to hold all the ternary matrices
+//    SmallnessRs R(pd); // to hold all the ternary matrices
+
+    std::vector<int> idxMap;
+    EVector allSecrets = concatSecrets(pd, idxMap);
 
     // Rejection sampling: Repeatedly choose random masking vectors y
     // and matrices R until both u=(concatenated-variables)*R and z=u+y
@@ -794,8 +809,18 @@ void proveSmallness(ProverData& pd) {
     // and we check that |u|_{infty} < B_smallness/129 and that
     // |z|_{infty} < B_smallness*128/129.
 
+    int paddingElements = PAD_SIZE / scalarsPerElement();
+    int subvecElements = DEC_ERRV_SZ/scalarsPerElement();
+    int JLelement = JLDIM / scalarsPerElement();
+
+    int nCols = LINYDIM/scalarsPerElement();
+    int nRows = vd.gk->kay +vd.gk->emm +2*JLelement +paddingElements*4
+                + vd.nDecSubvectors*(subvecElements+paddingElements);
+    assert(allSecrets.length() == nRows);
+
     EVector u;
-    resize(pd.y, LINYDIM/scalarsPerElement());
+    TernaryEMatrix R;
+    resize(pd.y, nCols);
     BoundedSizeElement randomzr(smlnsBits); // for choosing in [+-2^smlnsBits]
     for (int nTrials=0; true; nTrials++) {
         if (nTrials > 99) {
@@ -812,8 +837,8 @@ void proveSmallness(ProverData& pd) {
         vd.yCom = commit(pd.y, vd.yIdx, vd.Gs, pd.yRnd);
         merBkp.processPoint("smallnessPf", vd.yCom);
 
-        R.makeChallenge(merBkp); // choose random cahalenge trenary matrices R
-        u = R.compressVecs(pd);  // u = (concatenated-variables) * R
+        merBkp.newTernaryEMatrix("Smallness", R, nRows, nCols);
+        u = allSecrets * R;
         vd.z = u + pd.y;
 
         // check that u,z are small enough
@@ -835,57 +860,10 @@ void proveSmallness(ProverData& pd) {
     //     (concatenated-variables) * R*x + <y,x> = <z,x>
 
     EVector Rx = R*xvec;
-    int idxRx = 0;
-    int nPaddingElems = PAD_SIZE/scalarsPerElement();
+    assert(Rx.length()==idxMap.size());
 
-    // The secret key
-    expandConstraints(vd.smlnsLinCnstr, vd.sk2Idx,
-                      Rx, idxRx, idxRx+pd.sk2->length());
-    idxRx += pd.sk2->length();
-
-    // The secret-key padding
-    expandConstraints(vd.smlnsLinCnstr, vd.sk2PadIdx,
-                      Rx, idxRx, idxRx+nPaddingElems);
-    idxRx += nPaddingElems;
-
-    // The key-generation noise
-    expandConstraints(vd.smlnsLinCnstr, vd.kGenErrIdx,
-                      Rx, idxRx, idxRx+pd.kGenErr.length());
-    idxRx += pd.kGenErr.length();
-
-    // The key-generation noise padding
-    expandConstraints(vd.smlnsLinCnstr, vd.kGenErrPadIdx,
-                      Rx, idxRx, idxRx+nPaddingElems);
-    idxRx += nPaddingElems;
-
-    // The encryption randomness
-    expandConstraints(vd.smlnsLinCnstr, vd.rIdx,
-                      Rx, idxRx, idxRx+pd.r->length());
-    idxRx += pd.r->length();
-
-    // The encryption randomness padding
-    expandConstraints(vd.smlnsLinCnstr, vd.rPadIdx,
-                      Rx, idxRx, idxRx+nPaddingElems);
-    idxRx += nPaddingElems;
-
-    // The encryption noise
-    expandConstraints(vd.smlnsLinCnstr, vd.encErrIdx,
-                      Rx, idxRx, idxRx+pd.encErr.length());
-    idxRx += pd.encErr.length();
-
-    // The encryption noise padding
-    expandConstraints(vd.smlnsLinCnstr, vd.encErrPadIdx,
-                      Rx, idxRx, idxRx+nPaddingElems);
-    idxRx += nPaddingElems;
-
-    // The decryption noise
-    expandConstraints(vd.smlnsLinCnstr, vd.decErrIdx,
-                      Rx, idxRx, idxRx+pd.decErr->length());
-    idxRx += pd.encErr.length();
-
-    // The decryption noise padding
-    expandConstraints(vd.smlnsLinCnstr, vd.decErrPadIdx,
-                      Rx, idxRx, idxRx+pd.decErrPadding.length());
+    for (int i=0; i<idxMap.size(); i++)
+        expandConstraints(vd.smlnsLinCnstr, idxMap[i], Rx[i]);
 
     // The term <y,x>
     expandConstraints(vd.smlnsLinCnstr, vd.yIdx, xvec);
@@ -893,72 +871,17 @@ void proveSmallness(ProverData& pd) {
     // The term <z,x>
     setEqsTo(vd.smlnsLinCnstr, innerProduct(vd.z, xvec));
 #ifdef DEBUGGING
-    assert(R.innerProduct(pd,Rx) + innerProduct(pd.y,xvec) == innerProduct(vd.z,xvec));
+    assert(innerProduct(allSecrets,Rx) + innerProduct(pd.y,xvec) == innerProduct(vd.z,xvec));
 
     // verify the constraints
     DLPROOFS::PtxtVec pVec;
-    // The secret key
-    int idx = vd.sk2Idx;
-    for (int i=0; i<pd.sk2->length(); i++) {
+    // Everything except y
+    for (int i=0; i<idxMap.size(); i++) {
         for (int j=0; j<scalarsPerElement(); j++)
-            conv(pVec[idx++], coeff((*pd.sk2)[i], j));
-    }
-    // The secret key padding
-    idx = vd.sk2PadIdx;
-    for (int i=0; i<pd.sk2Padding.length(); i++) {
-        for (int j=0; j<scalarsPerElement(); j++)
-            conv(pVec[idx++], coeff(pd.sk2Padding[i], j));
-    }
-    // The key-generation noise variables
-    idx = vd.kGenErrIdx;
-    for (int i=0; i<pd.kGenErr.length(); i++) {
-        for (int j=0; j<scalarsPerElement(); j++)
-            conv(pVec[idx++], coeff(pd.kGenErr[i], j));
-    }
-    // The key-generation noise padding
-    idx = vd.kGenErrPadIdx;
-    for (int i=0; i<pd.kGenErrPadding.length(); i++) {
-        for (int j=0; j<scalarsPerElement(); j++)
-            conv(pVec[idx++], coeff(pd.kGenErrPadding[i], j));
-    }
-    // The encryption randomness variables
-    idx = vd.rIdx;
-    for (int i=0; i<pd.r->length(); i++) {
-        for (int j=0; j<scalarsPerElement(); j++)
-            conv(pVec[idx++], coeff((*pd.r)[i], j));
-    }
-    // The encryption randomness padding
-    idx = vd.rPadIdx;
-    for (int i=0; i<pd.rPadding.length(); i++) {
-        for (int j=0; j<scalarsPerElement(); j++)
-            conv(pVec[idx++], coeff(pd.rPadding[i], j));
-    }
-    // The encryption noise variables
-    idx = vd.encErrIdx;
-    for (int i=0; i<pd.encErr.length(); i++) {
-        for (int j=0; j<scalarsPerElement(); j++)
-            conv(pVec[idx++], coeff(pd.encErr[i], j));
-    }
-    // The encryption noise padding
-    idx = vd.encErrPadIdx;
-    for (int i=0; i<pd.encErrPadding.length(); i++) {
-        for (int j=0; j<scalarsPerElement(); j++)
-            conv(pVec[idx++], coeff(pd.encErrPadding[i], j));
-    }
-    // The decryption noise variables
-    idx = vd.decErrIdx;
-    for (int i=0; i<pd.decErr->length(); i++) {
-        for (int j=0; j<scalarsPerElement(); j++)
-            conv(pVec[idx++], coeff((*pd.decErr)[i], j));
-    }
-    // The decryption noise padding
-    idx = vd.decErrPadIdx;
-    for (int i=0; i<pd.decErrPadding.length(); i++) {
-        for (int j=0; j<scalarsPerElement(); j++)
-            conv(pVec[idx++], coeff(pd.decErrPadding[i], j));
+            conv(pVec[idxMap[i]+j], coeff(allSecrets[i], j));
     }
     // The vector y
-    idx = vd.yIdx;
+    int idx = vd.yIdx;
     for (int i=0; i<pd.y.length(); i++) {
         for (int j=0; j<scalarsPerElement(); j++)
             conv(pVec[idx++], coeff(pd.y[i], j));
@@ -968,6 +891,7 @@ void proveSmallness(ProverData& pd) {
         auto& linConstr = vd.smlnsLinCnstr[i];
         if (!checkConstraintLoose(linConstr, pVec)) {
             std::cout << "constraints for smallness #"<<i<<" failed\n";
+            std::cout << "  expected "<<balanced(DLPROOFS::dbgSum)<<std::endl;
             prettyPrint(std::cout<<"  cnstr=", linConstr) << std::endl;
             prettyPrint(std::cout<<"  pVec =", pVec) << std::endl;
             exit(0);
