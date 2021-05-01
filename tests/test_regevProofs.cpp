@@ -300,8 +300,7 @@ bool test_proofs() {
 
     // Commit separately to the original key and the padding, each one wrt
     // both the G's and the Hs
-    vd.sk1Com[0] = commit(sk[partyIdx], vd.sk1Idx, vd.Gs, pd.sk1Rnd[0]);
-    vd.sk1Com[1] = commit(sk[partyIdx], vd.sk1Idx, vd.Hs, pd.sk1Rnd[1]);
+    vd.sk1Com = commit(sk[partyIdx], vd.sk1Idx, vd.Gs, pd.sk1Rnd);
 
     proveDecryption(pd, ptxt2, decNoise, ctxtMat, ctxtVec);
     proveEncryption(pd, ptxt3, encRnd, encNoise, ctxt2.first, ctxt2.second);
@@ -343,8 +342,8 @@ bool test_proofs() {
 
     // Check the commitments against the linear constraints
 
-    /*// Decryption commitments
-    {std::vector<Point> decCommits(2); decCommits[0] = vd.pt1Com; decCommits[1]= vd.sk1Com;
+    // Decryption commitments
+    {std::vector<Point> decCommits = {vd.pt1Com, vd.sk1Com};
     std::vector<CRV25519::Scalar> decRand = {pd.pt1Rnd, pd.sk1Rnd};
     for (int i=0; i<vd.nDecSubvectors; i++) {
         decCommits.push_back(vd.decErrCom[i][0]);
@@ -353,21 +352,54 @@ bool test_proofs() {
     for (int i=0; i<scalarsPerElement(); i++) {
         if (!checkLinConstrain(vd.decLinCnstr[i], decCommits, decRand, witness, vd.ped))
             return false;
-    }}*/
+    }}
 
+    // Encryption commitments
+    {std::vector<Point> encCommits = {vd.pt2Com, vd.rCom[0], vd.encErrCom[0]};
+    std::vector<CRV25519::Scalar> encRand = {pd.pt2Rnd, pd.rRnd[0], pd.encErrRnd[0]};
+    for (int i=0; i<scalarsPerElement(); i++) {
+        if (!checkLinConstrain(vd.encLinCnstr[i], encCommits, encRand, witness, vd.ped))
+            return false;
+    }}
 
-    /*// Allocate empty constraints. For each of Decryption, Encryption,
-    // KeyGen, and approximate smallness, we have one linear constraints
-    // over GF(p^ell)). In addition, we have n+1-t linear constraints
-    // over Z_p for the proof of correct re-sharing
-    linConstr.resize(4*scalarsPerElement() + g.enn-g.tee+1);
-    decLinCnstr = &(linConstr[0]);
-    encLinCnstr = &(linConstr[scalarsPerElement()]);
-    kGenLinCnstr = &(linConstr[2*scalarsPerElement()]);
-    smlnsLinCnstr = &(linConstr[3*scalarsPerElement()]);
-    reShrLinCnstr= &(linConstr[4*scalarsPerElement()]);*/
+    // Key-generation commitments
+    {std::vector<Point> kgCommits = {vd.sk2Com[0], vd.kGenErrCom[0]};
+    std::vector<CRV25519::Scalar> kgRand = {pd.sk2Rnd[0], pd.kGenErrRnd[0]};
+    for (int i=0; i<scalarsPerElement(); i++) {
+        if (!checkLinConstrain(vd.kGenLinCnstr[i], kgCommits, kgRand, witness, vd.ped))
+            return false;
+    }}
 
+    // Resharing commitments
+    {std::vector<Point> reshrCommits = {vd.pt1Com, vd.pt2Com};
+    std::vector<CRV25519::Scalar> reshrRand = {pd.pt1Rnd, pd.pt2Rnd};
+    for (int i=0; i < vd.gk->enn -vd.gk->tee +1; i++) {
+        if (!checkLinConstrain(vd.reShrLinCnstr[i],
+                               reshrCommits, reshrRand, witness, vd.ped))
+            return false;
+    }}
 
+    // Smallness commitments
+    {std::vector<Point> smlCommits = {vd.sk2Com[0], vd.sk2PadCom[0],
+        vd.kGenErrCom[0], vd.kGenErrPadCom[0], vd.rCom[0], vd.rPadCom[0],
+        vd.encErrCom[0], vd.encErrPadCom[0]
+    };
+    std::vector<CRV25519::Scalar> smlRand = {pd.sk2Rnd[0], pd.sk2PadRnd[0],
+        pd.kGenErrRnd[0], pd.kGenErrPadRnd[0], pd.rRnd[0], pd.rPadRnd[0],
+        pd.encErrRnd[0], pd.encErrPadRnd[0]
+    };
+    for (int i=0; i<vd.nDecSubvectors; i++) {
+        smlCommits.push_back(vd.decErrCom[i][0]);
+        smlRand.push_back(pd.decErrRnd[i][0]);
+        smlCommits.push_back(vd.decErrPadCom[i][0]);
+        smlRand.push_back(pd.decErrPadRnd[i][0]);
+    }
+    smlCommits.push_back(vd.yCom);
+    smlRand.push_back(pd.yRnd);
+    for (int i=0; i<scalarsPerElement(); i++) {
+        if (!checkLinConstrain(vd.smlnsLinCnstr[i], smlCommits, smlRand, witness, vd.ped))
+            return false;
+    }}
     return true;
 }
 

@@ -202,10 +202,10 @@ struct VerifierData {
     std::vector<TwoPoints> decErrCom, decErrPadCom;
 
     // Most everything else is two commitment per vector
-    TwoPoints sk1Com, rCom, rPadCom, encErrCom, encErrPadCom,
+    TwoPoints rCom, rPadCom, encErrCom, encErrPadCom,
             sk2Com, sk2PadCom, kGenErrCom, kGenErrPadCom;
 
-    Point pt1Com, pt2Com, yCom;
+    Point sk1Com, pt1Com, pt2Com, yCom;
 
     std::vector<DLPROOFS::LinConstraint> linConstr;
     std::vector<DLPROOFS::QuadConstraint> normConstr;
@@ -223,7 +223,7 @@ struct VerifierData {
     // Reset when preparing for a new proof at the prover's site
     void prepareForNextProof() {
         std::swap(sk1Idx,sk2Idx);
-        sk1Com = sk2Com; // copy commitment to the previous sk
+        sk1Com = sk2Com[0]; // copy commitment to the previous sk wrt the Gs
 
         // zero out all the commitments and constraints
         TwoPoints empty2points;
@@ -255,9 +255,9 @@ struct ProverData {
     // For decryption noise we have four commitments per subvector.
     // The plaintext and the y vector have just one commitment each.
     std::vector<TwoScalars> decErrRnd, decErrPadRnd;
-    TwoScalars sk1Rnd, rRnd, rPadRnd, encErrRnd, encErrPadRnd,
+    TwoScalars rRnd, rPadRnd, encErrRnd, encErrPadRnd,
                 sk2Rnd, sk2PadRnd, kGenErrRnd, kGenErrPadRnd;
-    CRV25519::Scalar pt1Rnd, pt2Rnd, yRnd;
+    CRV25519::Scalar sk1Rnd, pt1Rnd, pt2Rnd, yRnd;
 
     // committed values: all except pt1, pt2, y consist of the original
     // vector, and padding to make them of a certain public size. For
@@ -276,8 +276,8 @@ struct ProverData {
     // Reset when preparing for a new proof at the prover's site
     void prepareForNextProof() {
         vd->prepareForNextProof(); // reset the public data
-        sk1Rnd = sk2Rnd; // randomness of commitment to secret key
-        sk1 = sk2;       // the secret key itself
+        sk1Rnd = sk2Rnd[0]; // randomness of commitment to secret key wrt Gs
+        sk1 = sk2;          // the secret key itself
 
         // zero-out everything else
         TwoScalars empty2scalars;
@@ -312,8 +312,8 @@ struct ProverData {
 };
 
 // Proof of decryption. We assume that the ProverData,VerifierData are
-// already initialized, and that ProverData contains the padded sk1
-// and VerifierData contains a commitment to it.
+// already initialized, and that ProverData contains sk1 and VerifierData
+// contains a commitment to it.
 void proveDecryption(ProverData& pd, const ALGEBRA::SVector& ptxt,
         const ALGEBRA::EVector& noise, const ALGEBRA::EMatrix& ctMat,
         const ALGEBRA::EVector& ctVec);

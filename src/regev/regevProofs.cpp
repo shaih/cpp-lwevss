@@ -33,8 +33,8 @@ using CRV25519::Point, DLPROOFS::PedersenContext,
 // NOTE: REGEVENC::Scalar is not the same as CRV25519::Scalar
 
 // Proof of decryption. We assume that the ProverData,VerifierData are
-// already initialized, and that ProverData contains the padded sk1
-// and VerifierData contains a commitment to it.
+// already initialized, and that ProverData contains sk1 and VerifierData
+// contains a commitment to it.
 void proveDecryption(ProverData& pd, const SVector& ptxt,
         const EVector& noise, const EMatrix& ctMat, const EVector& ctVec)
 {
@@ -173,61 +173,6 @@ void proveDecryption(ProverData& pd, const SVector& ptxt,
 void verifyDecryption(VerifierData& vd, // vd has all the commitments
         const ALGEBRA::EMatrix& ctMat, const ALGEBRA::EVector& ctVec)
 {
-    // commitment to decrypted plaintext
-    vd.mer->processPoint("RegevDecPtxt", vd.pt1Com);
-
-    // include the commitments to noise,padding in the Merlin transcript
-    for (int i=0; i<vd.nDecSubvectors; i++) {
-        auto& com2Noise = vd.decErrCom[i];
-        auto& com2Pad = vd.decErrPadCom[i];
-        vd.mer->processPoint("RegevDecNoise"+std::to_string(i), com2Noise[0]);
-        vd.mer->processPoint(std::string(), com2Noise[1]);
-        vd.mer->processPoint(std::string(), com2Pad[0]);
-        vd.mer->processPoint(std::string(), com2Pad[1]);
-    }
-    // A challenge scalar x, defines the vector xvec=(1,x,x^2,...)
-    Element x = vd.mer->newElement("RegevDec");
-    EVector xvec;
-    powerVector(xvec, x, vd.gk->tee); // the vector xvec=(1,x,x^2,...)
-
-    // Record the linear constraints
-    //            <sk,ctMat*xvec> +<ptxt,g*xvec> +<noise,xvec> = <ctVec,xvec>
-
-    setEqsTo(&(vd.linConstr[0]), innerProduct(ctVec, xvec));
-
-    // expand <sk,ctMat*xvec> 
-    EVector yvec = ctMat * xvec;
-    expandConstraints(&(vd.linConstr[0]), vd.sk1Idx, yvec);
-
-    // Expand <noise,xvec>
-    expandConstraints(&(vd.linConstr[0]), vd.decErrIdx, xvec);
-
-    // Constraints for <ptxt,g*xvec>, where ptxt is a Z_p vector, not GF(p^e)
-    makeConstraints(&(vd.linConstr[0]), vd.pt1Idx, xvec * vd.gk->g());
-
-    // Record the norm constraints |paddedNoise[i]|^2 =B_decNoise^2 forall i
-    // The indexes for each of them are set as follows: all the sub-vectors
-    // together make the two intervals: 
-    //  - for the vectors themselves [decErrIdx1, decErrIdx1+decErrLen1-1]
-    //  - for the padding            [decErrIdx2, decErrIdx2+decErrLen2-1]
-    // Each sub-vector has one slice from from each interval, of sizes
-    // DEC_ERRV_SZ = decErrLen1/nDecSubvectors for the vectors, and
-    // PAD_SIZE = decErrLen2/nDecSubvectors for the padding.
-
-    auto normSquared = vd.B_decNoise*vd.B_decNoise;
-    for (int i=0; i<vd.nDecSubvectors; i++) { // go over the sub-vectors
-        int start1 = vd.decErrIdx + i*DEC_ERRV_SZ;
-        int start2 = vd.decErrPadIdx + i*PAD_SIZE;
-
-        auto& normConstr = vd.normConstr[i];
-        for (int j=0; j<DEC_ERRV_SZ; j++)
-            normConstr.indexes.insert(normConstr.indexes.end(), start1+j);
-        for (int j=0; j<PAD_SIZE; j++)
-            normConstr.indexes.insert(normConstr.indexes.end(), start2+j);
-
-        // Records the norm-squared itself
-        conv(normConstr.equalsTo, normSquared); // convert to CRV25519::Scalar
-    }
 }
 
 // Proof of encryption. We assume that the ProverData,VerifierData are
