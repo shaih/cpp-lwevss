@@ -1,10 +1,12 @@
 #include <iostream>
 #include <cassert>
+#include <numeric>
 #include <NTL/ZZ.h>
 #include <NTL/mat_ZZ.h>
 
 #include "tests.hpp" // define strings LWEVSS_TESTS::passed and LWEVSS_TESTS::failed
 #include "utils.hpp"
+#include "pedersen.hpp"
 #include "regevProofs.hpp"
 
 using namespace std;
@@ -193,6 +195,43 @@ bool test_constraints() {
     return true;
 }
 
+
+static bool checkQuadConstrain(DLPROOFS::QuadConstraint& c,
+    const TwoPoints& coms, const TwoPoints& padComs, const TwoScalars& rnds,
+    const TwoScalars& padRnds, DLPROOFS::PtxtVec& witness, PedersenContext* ped)
+{
+    auto comG = coms[0] + padComs[0];
+    auto randG= rnds[0] + padRnds[0];
+    auto comH = coms[1] + padComs[1];
+    auto randH= rnds[1] + padRnds[1];
+
+    std::vector<CRV25519::Scalar> w;
+    std::vector<CRV25519::Point> gs;
+    std::vector<CRV25519::Point> hs;
+    for (auto i: c.indexes) {
+        gs.push_back(ped->getG(i));
+        hs.push_back(ped->getH(i));
+        w.push_back(witness[i]);
+    }
+    if (!DLPROOFS::verifyCom(comG, gs.data(), w.data(), gs.size(), randG))
+        return false;
+    return DLPROOFS::verifyCom(comH, hs.data(), w.data(), hs.size(), randH);
+}
+static bool checkLinConstrain(DLPROOFS::LinConstraint& c,
+    const std::vector<Point>& coms, const std::vector<CRV25519::Scalar>& rnds,
+    DLPROOFS::PtxtVec& witness, PedersenContext* ped)
+{
+    Point C = std::accumulate(coms.begin(), coms.end(), Point::identity());
+    CRV25519::Scalar r = std::accumulate(rnds.begin(), rnds.end(), CRV25519::Scalar());
+    std::vector<CRV25519::Scalar> w;
+    std::vector<CRV25519::Point> gs;
+    for (auto& it: c.terms) {
+        gs.push_back(ped->getG(it.first));
+        w.push_back(witness[it.first]);
+    }
+    return DLPROOFS::verifyCom(C, gs.data(), w.data(), gs.size(), r);
+}
+
 bool test_proofs() {
     GlobalKey gpk("testContext", /*k*/7, /*m*/6, /*n*/5);
     TernaryEMatrix::init();
@@ -257,21 +296,78 @@ bool test_proofs() {
 
     // prepare for proof, pad the secret key to exact norm and commit to it
     int origSize = sk[partyIdx].length(); 
-    pad2exactNorm(sk[partyIdx], pd.sk1Padding, vd.B_sk);
     pd.sk1 = &(sk[partyIdx]);
 
     // Commit separately to the original key and the padding, each one wrt
     // both the G's and the Hs
     vd.sk1Com[0] = commit(sk[partyIdx], vd.sk1Idx, vd.Gs, pd.sk1Rnd[0]);
     vd.sk1Com[1] = commit(sk[partyIdx], vd.sk1Idx, vd.Hs, pd.sk1Rnd[1]);
-    vd.sk1PadCom[0] = commit(sk[partyIdx], vd.sk1PadIdx, vd.Gs, pd.sk1PadRnd[0], origSize);
-    vd.sk1PadCom[1] = commit(sk[partyIdx], vd.sk1PadIdx, vd.Hs, pd.sk1PadRnd[1], origSize);
 
     proveDecryption(pd, ptxt2, decNoise, ctxtMat, ctxtVec);
     proveEncryption(pd, ptxt3, encRnd, encNoise, ctxt2.first, ctxt2.second);
     proveKeyGen(pd, sk[partyIdx], kgNoise[partyIdx], partyIdx);
     proveReShare(pd, interval(1,gpk.tee+1));
     proveSmallness(pd);
+
+    // Verify the commitments and constraints
+    DLPROOFS::PtxtVec witness;
+    pd.assembleFullWitness(witness);
+
+    for (auto& lncstr: vd.linConstr) {
+        if (!checkConstraintLoose(lncstr, witness))
+            return false;
+    }
+    for (auto& qdcstr: vd.normConstr) {
+        if (!checkConstraintLoose(qdcstr, witness, witness))
+            return false;
+    }
+
+    // Check the commitments against the quadratic constraints
+    for (int i=0; i<vd.nDecSubvectors; i++) {
+        if (!checkQuadConstrain(vd.normConstr[i], vd.decErrCom[i], vd.decErrPadCom[i],
+                            pd.decErrRnd[i], pd.decErrPadRnd[i], witness, vd.ped))
+        return false;
+    }
+    if (!checkQuadConstrain(*vd.rQuadCnstr, vd.rCom, vd.rPadCom,
+                            pd.rRnd, pd.rPadRnd, witness, vd.ped))
+        return false;
+    if (!checkQuadConstrain(*vd.encErrQuadCnstr, vd.encErrCom, vd.encErrPadCom,
+                            pd.encErrRnd, pd.encErrPadRnd, witness, vd.ped))
+        return false;
+    if (!checkQuadConstrain(*vd.skQuadCnstr, vd.sk2Com, vd.sk2PadCom,
+                            pd.sk2Rnd, pd.sk2PadRnd, witness, vd.ped))
+        return false;
+    if (!checkQuadConstrain(*vd.kgErrQuadCnstr, vd.kGenErrCom, vd.kGenErrPadCom,
+                            pd.kGenErrRnd, pd.kGenErrPadRnd, witness, vd.ped))
+        return false;
+
+    // Check the commitments against the linear constraints
+
+    /*// Decryption commitments
+    {std::vector<Point> decCommits(2); decCommits[0] = vd.pt1Com; decCommits[1]= vd.sk1Com;
+    std::vector<CRV25519::Scalar> decRand = {pd.pt1Rnd, pd.sk1Rnd};
+    for (int i=0; i<vd.nDecSubvectors; i++) {
+        decCommits.push_back(vd.decErrCom[i][0]);
+        decRand.push_back(pd.decErrRnd[i][0]);
+    }
+    for (int i=0; i<scalarsPerElement(); i++) {
+        if (!checkLinConstrain(vd.decLinCnstr[i], decCommits, decRand, witness, vd.ped))
+            return false;
+    }}*/
+
+
+    /*// Allocate empty constraints. For each of Decryption, Encryption,
+    // KeyGen, and approximate smallness, we have one linear constraints
+    // over GF(p^ell)). In addition, we have n+1-t linear constraints
+    // over Z_p for the proof of correct re-sharing
+    linConstr.resize(4*scalarsPerElement() + g.enn-g.tee+1);
+    decLinCnstr = &(linConstr[0]);
+    encLinCnstr = &(linConstr[scalarsPerElement()]);
+    kGenLinCnstr = &(linConstr[2*scalarsPerElement()]);
+    smlnsLinCnstr = &(linConstr[3*scalarsPerElement()]);
+    reShrLinCnstr= &(linConstr[4*scalarsPerElement()]);*/
+
+
     return true;
 }
 

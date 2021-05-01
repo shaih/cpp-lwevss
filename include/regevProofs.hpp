@@ -187,8 +187,8 @@ struct VerifierData {
     int nDecSubvectors; // number of decryption-noise subvectors
 
     // indexes into the generator list
-    int pt1Idx, sk1Idx, sk1PadIdx, decErrIdx, decErrPadIdx, // decryption
-        pt2Idx, rIdx, rPadIdx, encErrIdx, encErrPadIdx,     // encryption
+    int pt1Idx, sk1Idx, decErrIdx, decErrPadIdx,        // decryption
+        pt2Idx, rIdx, rPadIdx, encErrIdx, encErrPadIdx, // encryption
         sk2Idx, sk2PadIdx, kGenErrIdx, kGenErrPadIdx,   // key generation
         yIdx;                                          // smallness proof
 
@@ -202,8 +202,8 @@ struct VerifierData {
     std::vector<TwoPoints> decErrCom, decErrPadCom;
 
     // Most everything else is two commitment per vector
-    TwoPoints sk1Com, sk1PadCom, rCom, rPadCom, encErrCom,
-        encErrPadCom, sk2Com, sk2PadCom, kGenErrCom, kGenErrPadCom;
+    TwoPoints sk1Com, rCom, rPadCom, encErrCom, encErrPadCom,
+            sk2Com, sk2PadCom, kGenErrCom, kGenErrPadCom;
 
     Point pt1Com, pt2Com, yCom;
 
@@ -220,17 +220,10 @@ struct VerifierData {
     void setIndexes();
     void computeGenerators();
 
-    // Swap indexes of sk1,sk2 when preparing for a new proof
-    void swapSk1Sk2Idx() {
-        std::swap(sk1Idx,sk2Idx);
-        std::swap(sk1PadIdx,sk2PadIdx);
-    }
-
     // Reset when preparing for a new proof at the prover's site
     void prepareForNextProof() {
-        swapSk1Sk2Idx();
+        std::swap(sk1Idx,sk2Idx);
         sk1Com = sk2Com; // copy commitment to the previous sk
-        sk1PadCom = sk2PadCom;
 
         // zero out all the commitments and constraints
         TwoPoints empty2points;
@@ -262,8 +255,8 @@ struct ProverData {
     // For decryption noise we have four commitments per subvector.
     // The plaintext and the y vector have just one commitment each.
     std::vector<TwoScalars> decErrRnd, decErrPadRnd;
-    TwoScalars sk1Rnd, sk1PadRnd, rRnd, rPadRnd, encErrRnd,
-        encErrPadRnd, sk2Rnd, sk2PadRnd, kGenErrRnd, kGenErrPadRnd;
+    TwoScalars sk1Rnd, rRnd, rPadRnd, encErrRnd, encErrPadRnd,
+                sk2Rnd, sk2PadRnd, kGenErrRnd, kGenErrPadRnd;
     CRV25519::Scalar pt1Rnd, pt2Rnd, yRnd;
 
     // committed values: all except pt1, pt2, y consist of the original
@@ -274,16 +267,17 @@ struct ProverData {
     ALGEBRA::EVector *sk1, *decErr, *r, *sk2;
     ALGEBRA::SVector *pt1, *pt2;
 
-    ALGEBRA::EVector sk1Padding, decErrPadding, rPadding, 
+    ALGEBRA::EVector decErrPadding, rPadding, 
         encErr, encErrPadding, sk2Padding, kGenErr, kGenErrPadding, y;
+
+    // Collect all the secret variables in a DLPROOFS::PtxtVec map
+    void assembleFullWitness(DLPROOFS::PtxtVec& witness);
 
     // Reset when preparing for a new proof at the prover's site
     void prepareForNextProof() {
         vd->prepareForNextProof(); // reset the public data
         sk1Rnd = sk2Rnd; // randomness of commitment to secret key
-        sk1PadRnd = sk2PadRnd;
         sk1 = sk2;       // the secret key itself
-        std::swap(sk1Padding, sk2Padding);
 
         // zero-out everything else
         TwoScalars empty2scalars;
@@ -295,7 +289,7 @@ struct ProverData {
 
         decErr = r = sk2 = nullptr;
         pt1 = pt2 = nullptr;
-        clear(sk1Padding); clear(decErrPadding);  clear(rPadding);
+        clear(decErrPadding);  clear(rPadding);
         clear(encErr);     clear(encErrPadding);  clear(sk2Padding);
         clear(kGenErr);    clear(kGenErrPadding); clear(y);
     }
@@ -307,12 +301,13 @@ struct ProverData {
         decErrRnd.resize(vd->nDecSubvectors);
         decErrPadRnd.resize(vd->nDecSubvectors);
         // Allocate space for padding
-        ALGEBRA::resize(sk1Padding, paddingSize);
         ALGEBRA::resize(decErrPadding, vd->nDecSubvectors*paddingSize);
         ALGEBRA::resize(rPadding, paddingSize);
         ALGEBRA::resize(encErrPadding, paddingSize);
         ALGEBRA::resize(sk2Padding, paddingSize);
         ALGEBRA::resize(kGenErrPadding, paddingSize);
+        sk1 = decErr = r = sk2 = nullptr;
+        pt1 = pt2 = nullptr;
     }
 };
 
@@ -358,6 +353,11 @@ void verifySmallness(VerifierData& vd);
 
 
 /****** utility functions *******/
+
+// record the secret variables in a DLPROOFS::PtxtVec map as needed
+// for the Bulletproof protocols
+void addToWitness(DLPROOFS::PtxtVec& witness, int idx, const ALGEBRA::SVector& v);
+void addToWitness(DLPROOFS::PtxtVec& witness, int idx, const ALGEBRA::EVector& v);
 
 // compute the vector (1,x,x^2,...,x^{len-1})
 void powerVector(ALGEBRA::SVector& vec, const ALGEBRA::Scalar& x, int len);

@@ -108,8 +108,7 @@ void VerifierData::setIndexes() {
 
     // The indexes, in order: sk1,sk2,decErr,r,encErr,kGenErr,pt1,pt2,y
     sk1Idx = 0;
-    sk1PadIdx    = sk1Idx + skLen;
-    sk2Idx       = sk1PadIdx + PAD_SIZE;
+    sk2Idx       = sk1Idx + skLen;
     sk2PadIdx    = sk2Idx + skLen;
     decErrIdx    = sk2PadIdx + PAD_SIZE;
     decErrPadIdx = decErrIdx + decErrLen;
@@ -138,6 +137,7 @@ void VerifierData::computeGenerators() {
         Gs[i] = ped->getG(i);
     for (int i=0; i<hLen; i++)
         Hs[i] = ped->getH(i);
+    Hs[hLen-1] = ped->getH(gLen-1); // the last H generator has different index
 }
 
 
@@ -308,6 +308,37 @@ void powerVector(EVector& vec, const Element& x, int len) {
     conv(vec[0], 1);
     for (int i=1; i<vec.length(); i++)
         vec[i] = vec[i-1] * x;
+}
+
+void addToWitness(DLPROOFS::PtxtVec& witness, int idx, const SVector& v)
+{
+    for (int i=0; i<v.length(); i++) conv(witness[idx+i], v[i]);
+}
+void addToWitness(DLPROOFS::PtxtVec& witness, int idx, const EVector& v)
+{
+    for (int i=0; i<v.length(); i++) for (int j=0; j<scalarsPerElement(); j++)
+        conv(witness[idx++], coeff(v[i],j));
+}
+
+// Collect all the secret cariables in a DLPROOFS::PtxtVec map
+void ProverData::assembleFullWitness(DLPROOFS::PtxtVec& witness) {
+    if (pt1) addToWitness(witness, vd->pt1Idx, *pt1);
+    if (sk1) addToWitness(witness, vd->sk1Idx, *sk1);
+    if (decErr) addToWitness(witness, vd->decErrIdx, *decErr);
+    addToWitness(witness, vd->decErrPadIdx, decErrPadding);
+
+    if (pt2) addToWitness(witness, vd->pt2Idx, *pt2);
+    if (r) addToWitness(witness, vd->rIdx, *r);
+    addToWitness(witness, vd->rPadIdx, rPadding);
+    addToWitness(witness, vd->encErrIdx, encErr);
+    addToWitness(witness, vd->encErrPadIdx, encErrPadding);
+
+    if (sk2) addToWitness(witness, vd->sk2Idx, *sk2);
+    addToWitness(witness, vd->sk2PadIdx, sk2Padding);
+    addToWitness(witness, vd->kGenErrIdx, kGenErr);
+    addToWitness(witness, vd->kGenErrPadIdx, kGenErrPadding);
+
+    addToWitness(witness, vd->yIdx, y);
 }
 
 } // end of namespace REGEVENC

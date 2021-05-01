@@ -42,15 +42,6 @@ void proveDecryption(ProverData& pd, const SVector& ptxt,
     pd.pt1 = (SVector*) &ptxt;
     pd.decErr = (EVector*) &noise;
 
-#ifdef DEBUGGING
-    // check that sk*ctMat + ptxt*g + moise = ctVec
-    EVector ptxtTimesG;
-    resize(ptxtTimesG, ptxt.length());
-    for (int i=0; i<ptxtTimesG.length(); i++)
-        ptxtTimesG[i] = ptxt[i] * vd.gk->g();
-    assert(((*pd.sk1)*ctMat) + ptxtTimesG + noise == ctVec);
-#endif
-
     // commitment to decrypted plaintext
     vd.pt1Com = commit(ptxt, vd.pt1Idx, vd.Gs, pd.pt1Rnd);
     vd.mer->processPoint("RegevDecPtxt", vd.pt1Com);
@@ -58,10 +49,6 @@ void proveDecryption(ProverData& pd, const SVector& ptxt,
     // commitments to decryption noise subvectors
     int elementsPerSubvec= DEC_ERRV_SZ / scalarsPerElement();
     int paddingElements = PAD_SIZE / scalarsPerElement();
-
-    assert(DEC_ERRV_SZ % scalarsPerElement() == 0);
-    assert(PAD_SIZE % scalarsPerElement() == 0);
-    assert(elementsPerSubvec * vd.nDecSubvectors == noise.length());
 
     // ComPute the noise padding, then commit to the noise variables
     // and their padding, each wrt both the Gs and the Hs
@@ -74,17 +61,7 @@ void proveDecryption(ProverData& pd, const SVector& ptxt,
         // pad with four scalars to get l2 norm=B_decNoise
         pad2exactNorm(&(noise[elementIdx]), elementsPerSubvec,
                       &(pd.decErrPadding[paddingIdx]), vd.B_decNoise);
-#if 0 //ifdef DEBUGGING
-        std::cout << "noise subvec(idx="<<scalarIdx<<")=[";
-        for (int ii=0; ii<elementsPerSubvec; ii++)
-            std::cout << balanced(noise[elementIdx+ii])<<" ";
-        std::cout << "]\n";
 
-        std::cout << "padding subvec(idx="<<scalarPadIdx<<")=[";
-        for (int ii=0; ii<paddingElements; ii++)
-            std::cout << balanced(pd.decErrPadding[paddingIdx+ii])<<" ";
-        std::cout << "]\n";
-#endif
         // Commit to the noise variables, wrt both the G's and H's
         auto& com2Noise = vd.decErrCom[i];
         auto& randOfNoise = pd.decErrRnd[i];
@@ -112,113 +89,25 @@ void proveDecryption(ProverData& pd, const SVector& ptxt,
         vd.mer->processPoint(std::string(), com2Pad[1]);
     }
     // A challenge scalar x, defines the vector xvec=(1,x,x^2,...)
-#if 0 // ifdef DEBUGGING
-    NTL::ZZ_pX px;
-    NTL::SetCoeff(px,0); // p(x)=1;
-    Element x;
-    conv(x,px);
-#else
     Element x = vd.mer->newElement("RegevDec");
-#endif
-    assert(ptxt.length()==vd.gk->tee);
     EVector xvec;
     powerVector(xvec, x, ptxt.length()); // the vector xvec=(1,x,x^2,...)
 
     // Record the linear constraints
     //            <sk,ctMat*xvec> +<ptxt,g*xvec> +<noise,xvec> = <ctVec,xvec>
 
-    EVector yvec = ctMat * xvec;
-
-#ifdef DEBUGGING
-    // Start by checking that indeed this constraint holds
-    auto xvec2 = xvec * vd.gk->g();
-    assert(xvec.length()==ptxt.length());
-    Element sum = innerProduct((*pd.sk1), yvec) + innerProduct(noise, xvec) + innerProduct(ptxt, xvec2);
-    assert(sum==innerProduct(ctVec, xvec));
-
-    // verify the constraints
-    DLPROOFS::PtxtVec pVec;
-    // The plaintext variables
-    int idx = vd.pt1Idx;
-    for (int i=0; i<pd.pt1->length(); i++) {
-        conv(pVec[idx++], (*pd.pt1)[i]);
-    }
-    // The secret key variables
-    idx = vd.sk1Idx;
-    for (int i=0; i<pd.sk1->length(); i++) {
-        for (int j=0; j<scalarsPerElement(); j++)
-            conv(pVec[idx++], coeff((*pd.sk1)[i], j));
-    }
-    // The noise variables
-    idx = vd.decErrIdx;
-    for (int i=0; i<pd.decErr->length(); i++) {
-        for (int j=0; j<scalarsPerElement(); j++)
-            conv(pVec[idx++], coeff((*pd.decErr)[i], j));
-    }
-    // The noise padding
-    idx = vd.decErrPadIdx;
-    for (int i=0; i<pd.decErrPadding.length(); i++) {
-        for (int j=0; j<scalarsPerElement(); j++)
-            conv(pVec[idx++], coeff(pd.decErrPadding[i], j));
-    }
-    clear(sum);
-#endif
-
-    // Prepare the linear constraints
-
     // The element <ctVec,cvec>
     setEqsTo(&(vd.linConstr[0]), innerProduct(ctVec, xvec));
 
     // expand <sk,ctMat*xvec> 
+    EVector yvec = ctMat * xvec;
     expandConstraints(&(vd.linConstr[0]), vd.sk1Idx, yvec);
-#ifdef DEBUGGING
-    sum += innerProduct((*pd.sk1), yvec);
-    setEqsTo(&(vd.linConstr[0]), sum);
-    for (int i=0; i<scalarsPerElement(); i++) {
-        auto& linConstr = vd.linConstr[i];
-        if (!checkConstraintLoose(linConstr, pVec)) {
-            std::cout << "  constraints for <sk,yvec> #"<<i<<" failed\n  ";
-            prettyPrint(std::cout, linConstr) << std::endl;
-            std::cout << "  sk(idx="<<vd.sk1Idx<<")="<<ALGEBRA::balanced(*pd.sk1)<<std::endl;
-            std::cout << "  yvec="<<ALGEBRA::balanced(yvec)<<std::endl;
-            exit(0);
-        }
-    }
-#endif
 
     // Expand <noise,xvec>
     expandConstraints(&(vd.linConstr[0]), vd.decErrIdx, xvec);
-#ifdef DEBUGGING
-    sum += innerProduct(noise,xvec);
-    setEqsTo(&(vd.linConstr[0]), sum);
-    for (int i=0; i<scalarsPerElement(); i++) {
-        auto& linConstr = vd.linConstr[i];
-        if (!checkConstraintLoose(linConstr, pVec)) {
-            std::cout << "  constraints for <noise,xvec> #"<<i<<" failed\n  ";
-            prettyPrint(std::cout, linConstr) << std::endl;
-            std::cout << "  noise(idx="<<vd.decErrIdx<<")="<<ALGEBRA::balanced(noise)<<std::endl;
-            std::cout << "  xvec="<<ALGEBRA::balanced(xvec)<<std::endl;
-            exit(0);
-        }
-    }
-#endif
 
     // Constraints for <ptxt,g*xvec>, where ptxt is a Z_p vector, not GF(p^e)
     makeConstraints(&(vd.linConstr[0]), vd.pt1Idx, xvec*vd.gk->g());
-#ifdef DEBUGGING
-    sum += innerProduct(ptxt, xvec2);
-    setEqsTo(&(vd.linConstr[0]), sum);
-    for (int i=0; i<scalarsPerElement(); i++) {
-        auto& linConstr = vd.linConstr[i];
-        if (!checkConstraintLoose(linConstr, pVec)) {
-            std::cout << "constraints for <ptxt,g*xvec> #"<<i<<" failed\n  ";
-            prettyPrint(std::cout, linConstr) << std::endl;
-            std::cout << "  ptxt(idx="<<vd.pt1Idx<<")="<<ALGEBRA::balanced(ptxt)<<std::endl;
-            std::cout << "  xvec*g="<<ALGEBRA::balanced(xvec2)<<std::endl;
-            exit(0);
-        }
-    }
-#endif
 
     // Record the norm constraints |paddedNoise[i]|^2 =B_decNoise^2 forall i
     // The indexes for each of them are set as follows: all the sub-vectors
@@ -243,7 +132,31 @@ void proveDecryption(ProverData& pd, const SVector& ptxt,
         // Records the norm-squared itself
         conv(normConstr.equalsTo, normSquared); // convert to CRV25519::Scalar
     }
+
 #ifdef DEBUGGING
+    assert(ptxt.length()==vd.gk->tee);
+    assert(xvec.length()==ptxt.length());
+    assert(DEC_ERRV_SZ % scalarsPerElement() == 0);
+    assert(PAD_SIZE % scalarsPerElement() == 0);
+    assert(elementsPerSubvec * vd.nDecSubvectors == noise.length());
+
+    // Start by checking that indeed this constraint holds
+    Element sum = innerProduct((*pd.sk1), yvec) + innerProduct(noise, xvec) + innerProduct(ptxt, xvec*vd.gk->g());
+    assert(sum==innerProduct(ctVec, xvec));
+
+    // verify the constraints
+    DLPROOFS::PtxtVec pVec;
+    pd.assembleFullWitness(pVec);
+    for (int i=0; i<scalarsPerElement(); i++) {
+        auto& linConstr = vd.linConstr[i];
+        if (!checkConstraintLoose(linConstr, pVec)) {
+            std::cout << "  constraints for <noise,xvec> #"<<i<<" failed\n  ";
+            prettyPrint(std::cout, linConstr) << std::endl;
+            std::cout << "  noise(idx="<<vd.decErrIdx<<")="<<ALGEBRA::balanced(noise)<<std::endl;
+            std::cout << "  xvec="<<ALGEBRA::balanced(xvec)<<std::endl;
+            exit(0);
+        }
+    }
     for (int i=0; i<vd.nDecSubvectors; i++) { // go over the sub-vectors
         auto& normConstr = vd.normConstr[i];
         if (!checkConstraintLoose(normConstr, pVec, pVec)) {
@@ -280,7 +193,6 @@ void verifyDecryption(VerifierData& vd, // vd has all the commitments
     // Record the linear constraints
     //            <sk,ctMat*xvec> +<ptxt,g*xvec> +<noise,xvec> = <ctVec,xvec>
 
-    // The element <ctVec,cvec>
     setEqsTo(&(vd.linConstr[0]), innerProduct(ctVec, xvec));
 
     // expand <sk,ctMat*xvec> 
@@ -398,14 +310,7 @@ void proveEncryption(ProverData& pd, const ALGEBRA::SVector& ptxt,
     vd.mer->processPoint(std::string(), vd.encErrPadCom[1]);
 
     // A challenge element x, defines the vector xvec=(1,x,x^2,...)
-//#ifdef DEBUGGING
-//    Element x;
-//    NTL::ZZ_pX px;
-//    NTL::SetCoeff(px,0); // p(x)=1;
-//    conv(x,px);
-//#else
     Element x = vd.mer->newElement("RegevEncChallenge");
-//#endif
     EVector xvec;
     powerVector(xvec, x, pd.encErr.length()); // the vector xvec=(1,x,x^2,...)
 
@@ -450,36 +355,7 @@ void proveEncryption(ProverData& pd, const ALGEBRA::SVector& ptxt,
 
     // verify the constraints
     DLPROOFS::PtxtVec pVec;
-    // The randomness variables
-    int idx = vd.rIdx;
-    for (int i=0; i<pd.r->length(); i++) {
-        for (int j=0; j<scalarsPerElement(); j++)
-            conv(pVec[idx++], coeff((*pd.r)[i], j));
-    }
-    // The noise variables
-    idx = vd.encErrIdx;
-    for (int i=0; i<pd.encErr.length(); i++) {
-        for (int j=0; j<scalarsPerElement(); j++)
-            conv(pVec[idx++], coeff(pd.encErr[i], j));
-    }
-    // The plaintext variables
-    idx = vd.pt2Idx;
-    for (int i=0; i<pd.pt2->length(); i++) {
-        conv(pVec[idx++], (*pd.pt2)[i]);
-    }
-    // The randomness padding
-    idx = vd.rPadIdx;
-    for (int i=0; i<pd.rPadding.length(); i++) {
-        for (int j=0; j<scalarsPerElement(); j++)
-            conv(pVec[idx++], coeff(pd.rPadding[i], j));
-    }
-    // The noise padding
-    idx = vd.encErrPadIdx;
-    for (int i=0; i<pd.encErrPadding.length(); i++) {
-        for (int j=0; j<scalarsPerElement(); j++)
-            conv(pVec[idx++], coeff(pd.encErrPadding[i], j));
-    }
-
+    pd.assembleFullWitness(pVec);
     for (int i=0; i<scalarsPerElement(); i++) { // check the linear constraints
         auto& linConstr = vd.encLinCnstr[i];
         if (!checkConstraintLoose(linConstr, pVec)) {
@@ -518,9 +394,9 @@ void proveKeyGen(ProverData& pd, const ALGEBRA::EVector& sk,
     pad2exactNorm(*pd.sk2, pd.sk2Padding, vd.B_sk);
 
     // commitment to the secret key and padding, wrt both the Gs and Hs
-    vd.sk2Com[0] = commit(sk, vd.sk2Idx, vd.Gs, pd.sk2Rnd[0]);
-    vd.sk2Com[1] = commit(sk, vd.sk2Idx, vd.Hs, pd.sk2Rnd[1]);
-    vd.sk2PadCom[0]= commit(sk, vd.sk2PadIdx, vd.Gs, pd.sk2PadRnd[0]);
+    vd.sk2Com[0] = commit(*pd.sk2, vd.sk2Idx, vd.Gs, pd.sk2Rnd[0]);
+    vd.sk2Com[1] = commit(*pd.sk2, vd.sk2Idx, vd.Hs, pd.sk2Rnd[1]);
+    vd.sk2PadCom[0]= commit(pd.sk2Padding, vd.sk2PadIdx, vd.Gs, pd.sk2PadRnd[0]);
     // We re-do the last commitment until R*noise is small enough
 
     // Process the commitments
@@ -533,7 +409,7 @@ void proveKeyGen(ProverData& pd, const ALGEBRA::EVector& sk,
     // while (true) {
     for (int nTrials=1; true; nTrials++) {
         auto merBkp = *(vd.mer);
-        vd.sk2PadCom[1]= commit(sk, vd.sk2PadIdx, vd.Hs, pd.sk2PadRnd[1]);
+        vd.sk2PadCom[1]= commit(pd.sk2Padding, vd.sk2PadIdx, vd.Hs, pd.sk2PadRnd[1]);
         merBkp.processPoint(std::string(), vd.sk2PadCom[1]);
 
         // Get the challenge matrix and set noise' = R*noise
@@ -570,14 +446,7 @@ void proveKeyGen(ProverData& pd, const ALGEBRA::EVector& sk,
     vd.mer->processPoint(std::string(), vd.kGenErrPadCom[1]);
 
     // A challenge scalar x, defines the vector xvec=(1,x,x^2,...)
-//#ifdef DEBUGGING
-//    Element x;
-//    NTL::ZZ_pX px;
-//    NTL::SetCoeff(px,0); // p(x)=1;
-//    conv(x,px);
-//#else
     Element x = vd.mer->newElement("RegevKeyGenChallenge");
-//#endif
     EVector xvec;
     powerVector(xvec, x, pd.kGenErr.length()); // the vector xvec=(1,x,x^2,...)
 
@@ -616,31 +485,7 @@ void proveKeyGen(ProverData& pd, const ALGEBRA::EVector& sk,
 
     // verify the constraints
     DLPROOFS::PtxtVec pVec;
-    // The secret key variables
-    int idx = vd.sk2Idx;
-    for (int i=0; i<pd.sk2->length(); i++) {
-        for (int j=0; j<scalarsPerElement(); j++)
-            conv(pVec[idx++], coeff((*pd.sk2)[i], j));
-    }
-    // The noise variables
-    idx = vd.kGenErrIdx;
-    for (int i=0; i<pd.kGenErr.length(); i++) {
-        for (int j=0; j<scalarsPerElement(); j++)
-            conv(pVec[idx++], coeff(pd.kGenErr[i], j));
-    }
-    // The secret key padding
-    idx = vd.sk2PadIdx;
-    for (int i=0; i<pd.sk2Padding.length(); i++) {
-        for (int j=0; j<scalarsPerElement(); j++)
-            conv(pVec[idx++], coeff(pd.sk2Padding[i], j));
-    }
-    // The noise padding
-    idx = vd.kGenErrPadIdx;
-    for (int i=0; i<pd.kGenErrPadding.length(); i++) {
-        for (int j=0; j<scalarsPerElement(); j++)
-            conv(pVec[idx++], coeff(pd.kGenErrPadding[i], j));
-    }
-
+    pd.assembleFullWitness(pVec);
     for (int i=0; i<scalarsPerElement(); i++) { // check the linear constraints
         auto& linConstr = vd.kGenLinCnstr[i];
         if (!checkConstraintLoose(linConstr, pVec)) {
@@ -709,14 +554,7 @@ void proveReShare(ProverData& pd, const TOOLS::EvalSet& recSet) {
 
     // verify the constraints
     DLPROOFS::PtxtVec pVec;
-    // The two plaintext arrays
-    int idx = vd.pt1Idx;
-    for (int i=0; i<pd.pt1->length(); i++)
-        conv(pVec[idx++], (*pd.pt1)[i]);
-    idx = vd.pt2Idx;
-    for (int i=0; i<pd.pt2->length(); i++)
-        conv(pVec[idx++], (*pd.pt2)[i]);
-
+    pd.assembleFullWitness(pVec);
     for (int i=0; i<vd.sp->H.NumRows(); i++) { // the j'th constraint
         if (!checkConstraintLoose(vd.reShrLinCnstr[i], pVec)) {
             std::cout << "constraints #"<<i<<" for re-sharing failed\n  ";
@@ -798,8 +636,6 @@ static EVector concatSecrets(const ProverData& pd, std::vector<int>& idxMap) {
 
 void proveSmallness(ProverData& pd) {
     VerifierData& vd = *(pd.vd);
-//    SmallnessRs R(pd); // to hold all the ternary matrices
-
     std::vector<int> idxMap;
     EVector allSecrets = concatSecrets(pd, idxMap);
 
@@ -860,7 +696,6 @@ void proveSmallness(ProverData& pd) {
     //     (concatenated-variables) * R*x + <y,x> = <z,x>
 
     EVector Rx = R*xvec;
-    assert(Rx.length()==idxMap.size());
 
     for (int i=0; i<idxMap.size(); i++)
         expandConstraints(vd.smlnsLinCnstr, idxMap[i], Rx[i]);
@@ -871,22 +706,12 @@ void proveSmallness(ProverData& pd) {
     // The term <z,x>
     setEqsTo(vd.smlnsLinCnstr, innerProduct(vd.z, xvec));
 #ifdef DEBUGGING
+    assert(Rx.length()==idxMap.size());
     assert(innerProduct(allSecrets,Rx) + innerProduct(pd.y,xvec) == innerProduct(vd.z,xvec));
 
     // verify the constraints
     DLPROOFS::PtxtVec pVec;
-    // Everything except y
-    for (int i=0; i<idxMap.size(); i++) {
-        for (int j=0; j<scalarsPerElement(); j++)
-            conv(pVec[idxMap[i]+j], coeff(allSecrets[i], j));
-    }
-    // The vector y
-    int idx = vd.yIdx;
-    for (int i=0; i<pd.y.length(); i++) {
-        for (int j=0; j<scalarsPerElement(); j++)
-            conv(pVec[idx++], coeff(pd.y[i], j));
-    }
-
+    pd.assembleFullWitness(pVec);
     for (int i=0; i<scalarsPerElement(); i++) { // check the linear constraints
         auto& linConstr = vd.smlnsLinCnstr[i];
         if (!checkConstraintLoose(linConstr, pVec)) {
