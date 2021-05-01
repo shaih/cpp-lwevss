@@ -29,6 +29,7 @@
 #include "scalar25519.hpp"
 #include "point25519.hpp"
 #include "constraints.hpp"
+#include "pedersen.hpp"
 #include "merlin.hpp"
 
 namespace DLPROOFS {
@@ -75,7 +76,9 @@ struct LinPfTranscript {
 
 // The lower-level routines. These functions modify in place the lists
 // of points and scalars in the FlatLinStmt while processing the proof
-void proveLinear(LinPfTranscript& pf, FlatLinStmt& st, MerlinBPctx& m);
+void proveLinear(LinPfTranscript& proof, Scalar r, MerlinBPctx& mer,
+        Scalar* const as, Scalar* const bs, Point* const gs, size_t n);
+//void proveLinear(LinPfTranscript& pf, FlatLinStmt& st, MerlinBPctx& m, Scalar& r);
 bool verifyLinear(LinPfTranscript& pf, FlatLinStmt& st, MerlinBPctx& m);
 
 inline LinPfTranscript proveLinear(const std::string& tag, 
@@ -86,7 +89,16 @@ inline LinPfTranscript proveLinear(const std::string& tag,
 
     FlatLinStmt st(tag, cnstr, xes); // "Faltten" the statement and witness
  
-    proveLinear(proof, st, mer);       // The actual proof
+    // Compute and push {"C": commitment to the xes}
+    Scalar r = CRV25519::randomScalar();
+    proof.C = DLPROOFS::commit(st.generators.data(), st.witness.data(), st.generators.size(), r); // commitment to the xes=as
+
+    size_t n = st.generators.size();
+    Scalar* const as = st.witness.data();   // these are the xes   
+    Scalar* const bs = st.statement.data(); // these are the constraints
+    Point* const gs = st.generators.data(); // these are the generators
+
+    proveLinear(proof, r, mer, as, bs, gs, n); // The actual proof
     return proof;
 }
 
@@ -137,7 +149,9 @@ struct QuadPfTranscript {
 
 // The lower-level routines. These functions modify in place the lists
 // of points and scalars in the FlatQuadStmt while processing the proof
-void proveQuadratic(QuadPfTranscript& pf, FlatQuadStmt& st, MerlinBPctx& m);
+void proveQuadratic(QuadPfTranscript& pf, Scalar r, MerlinBPctx& m, 
+                    Point* gs, Scalar* as, Point* hs, Scalar* bs, size_t n);
+//void proveQuadratic(QuadPfTranscript& pf, FlatQuadStmt& st, MerlinBPctx& m);
 bool verifyQuadratic(QuadPfTranscript& pf, FlatQuadStmt& st, MerlinBPctx& m);
 
 inline QuadPfTranscript proveQuadratic(const std::string& tag,
@@ -146,7 +160,18 @@ inline QuadPfTranscript proveQuadratic(const std::string& tag,
     MerlinBPctx mer(tag);  // Make a Merlin state that includes the statement
     mer.processConstraint("constraint", cnstr); 
     FlatQuadStmt st(tag, cnstr, xs, ys); // "Faltten" statement and witnesses
-    proveQuadratic(pf, st, mer);         // The actual proof
+
+    size_t n = st.gs.size();
+    Scalar* const as = st.wG.data(); // the a sitnesses
+    Scalar* const bs = st.wH.data(); // the b sitnesses
+    Point* const gs = st.gs.data();  // the G generators
+    Point* const hs = st.hs.data();  // the H generators
+
+    // Compute and push {"C": commitment to the xes}
+    Scalar r = CRV25519::randomScalar();
+    pf.C = DLPROOFS::commit2(gs, as, hs, bs, n, r); // commitment to the x'es and y's
+
+    proveQuadratic(pf, r, mer, gs, as, hs, bs, n);  // The actual proof
     return pf;
 }
 

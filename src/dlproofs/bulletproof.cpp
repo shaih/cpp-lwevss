@@ -65,8 +65,7 @@ FlatLinStmt::FlatLinStmt(const std::string& label,
     // Record/copy all the points/scalars
     PedersenContext ped(label);
     auto it1 = xes.begin();
-    auto it2 = cnstr.terms.begin();
-    while (it2 != cnstr.terms.end()) {
+    for (auto it2 = cnstr.terms.begin(); it2 != cnstr.terms.end(); ++it2) {
         size_t idx = it2->first;
         if (n2>0) {
             if (it1->first != idx)
@@ -76,7 +75,6 @@ FlatLinStmt::FlatLinStmt(const std::string& label,
         }
         statement.push_back(it2->second);
         generators.push_back(ped.getG(idx));
-        ++it2;
     }
     equalsTo = cnstr.equalsTo;
 #ifdef DEBUGGING
@@ -126,28 +124,16 @@ FlatQuadStmt::FlatQuadStmt(const std::string& label,
 /*******************************************************************/
 
 // The lower-level prover function. This function modifies in place the lists
-// of points and scalars in the FlatLinStmt while generating the proof
-void proveLinear(LinPfTranscript& proof, FlatLinStmt& st, MerlinBPctx& mer) {
-    size_t n = st.generators.size();
-    Scalar* const as = st.witness.data();   // these are the xes   
-    Scalar* const bs = st.statement.data(); // these are the constraints
-    Point* const gs = st.generators.data(); // these are the generators
-
-    // Compute and push {"C": commitment to the xes}
-    Scalar r = CRV25519::randomScalar();
-    proof.C = DLPROOFS::commit(gs, as, n, r); // commitment to the xes=as
+// of points and scalars in the FlatLinStmt while generating the proof. It
+// assumes that the commitment to the secret is already included in proof.C,
+// and te randomness for that commitment is the scalar r.
+void proveLinear(LinPfTranscript& proof, Scalar r, MerlinBPctx& mer,
+        Scalar* const as, Scalar* const bs, Point* const gs, size_t n) {
+    // push {"C": commitment to the xes}
     mer.processPoint("C", proof.C);
 
     // Get the generator F
     Point F = mer.newGenerator("F");
-#ifdef DEBUGGING
-    FF = F;
-    Point CC = proof.C + F * st.equalsTo;
-    assert( verifyCom(CC, gs, as, n, r, F, st.equalsTo) );
-    size_t ii = 0;
-    dbg_x.clear();
-    dbg_xInv.clear();
-#endif
 
     // Main body of proof, keep halving until n==1
     size_t nOver2 = next2power(n)/2;
@@ -181,13 +167,6 @@ void proveLinear(LinPfTranscript& proof, FlatLinStmt& st, MerlinBPctx& mer) {
         r += s*x + t*xInv;
         n = nOver2;
         nOver2 /= 2;
-#ifdef DEBUGGING
-        dbg_x.push_back(x);
-        dbg_xInv.push_back(xInv);
-        CC += L*x + R*xInv;
-        Scalar ab = CRV25519::innerProduct(as, bs, n);
-        assert( verifyCom(CC, gs, as, n, r, F, ab) );
-#endif
     }
 
     // base step for n==1
@@ -203,10 +182,6 @@ void proveLinear(LinPfTranscript& proof, FlatLinStmt& st, MerlinBPctx& mer) {
     // prover sends two scalars a' = s + a0*x, r' = t + r*x
     proof.a = s + as[0]*x;
     proof.r = t + r * x;
-#ifdef DEBUGGING
-    dbg_x.push_back(x);
-    assert( proof.S + CC*x == Point::base()*proof.r + FF*(proof.a*bs[0]) + gs[0]*proof.a );
-#endif
 }
 
 // The lower-level verifier function. Modifies in place the lists of
@@ -216,10 +191,6 @@ bool verifyLinear(LinPfTranscript& proof, FlatLinStmt& st, MerlinBPctx& mer) {
     size_t original_n = n;
     Scalar* const bs = st.statement.data(); // these are the constraints
     Point* const gs = st.generators.data(); // these are the generators
-#ifdef DEBUGGING
-    Point gs2[n];
-    for (size_t i=0; i<n; i++) gs2[i]=gs[i];
-#endif
 
     // Include the commitment to the witness
     mer.processPoint("C", proof.C);
@@ -227,10 +198,6 @@ bool verifyLinear(LinPfTranscript& proof, FlatLinStmt& st, MerlinBPctx& mer) {
     // Get the generator F
     Point F = mer.newGenerator("F");
     Point C = proof.C + F*st.equalsTo;
-#ifdef DEBUGGING
-    Point CC = C;
-    assert(FF == F);
-#endif
 
     size_t logN = log2roundUp(n);
     if (proof.Ls.size() != logN || proof.Rs.size() != logN) {
@@ -251,11 +218,6 @@ bool verifyLinear(LinPfTranscript& proof, FlatLinStmt& st, MerlinBPctx& mer) {
         mer.processPoint("R", R);
         Scalar& x = xes[ii] = mer.newChallenge("x");
         Scalar& xInv = xInvs[ii] = inverseOf(x); // xi^{-1}
-#ifdef DEBUGGING
-        assert(xes[ii] == dbg_x.at(ii));
-        assert(xInvs[ii] == dbg_xInv.at(ii));
-        CC += L*x + R*xInv;
-#endif
 
         // We will later need to compute the multi-exponentiation
         //    \sum_i Li*xi^{-1} + Ri*xi,
@@ -265,9 +227,6 @@ bool verifyLinear(LinPfTranscript& proof, FlatLinStmt& st, MerlinBPctx& mer) {
         // Update the first half of the bs
         for (size_t i=0; i<n-nOver2; i++) {
             bs[i] += bs[i+nOver2] * x;
-#ifdef DEBUGGING
-            gs2[i] += gs2[i+nOver2] * x;
-#endif
         }
         n = nOver2;
         nOver2 /= 2;
@@ -285,11 +244,6 @@ bool verifyLinear(LinPfTranscript& proof, FlatLinStmt& st, MerlinBPctx& mer) {
 
     // final challenge x
     Scalar x = mer.newChallenge("x");
-#ifdef DEBUGGING
-    assert(x == dbg_x[dbg_x.size()-1]);
-    assert(gs[0]==gs2[0]);
-    assert(C==CC);
-#endif
     return ( proof.S + C*x == Point::base()*proof.r + F*(proof.a*bs[0]) + gs[0]*proof.a );
 }
 
@@ -314,29 +268,13 @@ bool verifyLinear(LinPfTranscript& proof, FlatLinStmt& st, MerlinBPctx& mer) {
 
 // The lower-level prover function. This function modifies in place the lists
 // of points and scalars in the FlatQuadStmt while generating the proof
-void proveQuadratic(QuadPfTranscript& pf, FlatQuadStmt& st, MerlinBPctx& mer)
+void proveQuadratic(QuadPfTranscript& pf, Scalar r, MerlinBPctx& mer, 
+                    Point* gs, Scalar* as, Point* hs, Scalar* bs, size_t n)
 {
-    size_t n = st.gs.size();
-    Scalar* const as = st.wG.data(); // the a sitnesses
-    Scalar* const bs = st.wH.data(); // the b sitnesses
-    Point* const gs = st.gs.data();  // the G generators
-    Point* const hs = st.hs.data();  // the H generators
-
-    // Compute and push {"C": commitment to the xes}
-    Scalar r = CRV25519::randomScalar();
-    pf.C = DLPROOFS::commit2(gs, as, hs, bs, n, r); // commitment to the x'es and y's
     mer.processPoint("C", pf.C);
 
     // Get the generator F
     Point F = mer.newGenerator("F");
-#ifdef DEBUGGING
-    FF = F;
-    Point CC = pf.C + F * st.equalsTo;
-    assert( verifyCom2(CC, gs, as, hs, bs, n, r, F, st.equalsTo) );
-    size_t ii = 0;
-    dbg_x.clear();
-    dbg_xInv.clear();
-#endif
 
     // Main body of proof, keep halving until n==1
     size_t nOver2 = next2power(n)/2;
@@ -361,10 +299,6 @@ void proveQuadratic(QuadPfTranscript& pf, FlatQuadStmt& st, MerlinBPctx& mer)
         mer.processPoint("R", R);
         Scalar x = mer.newChallenge("x");
         Scalar xInv = inverseOf(x);
-#ifdef DEBUGGING
-        dbg_x.push_back(x);
-        dbg_xInv.push_back(xInv);
-#endif
 
         for (size_t i=0; i<n-nOver2; i++) {
             as[i] += as[i+nOver2] * xInv;
@@ -377,11 +311,6 @@ void proveQuadratic(QuadPfTranscript& pf, FlatQuadStmt& st, MerlinBPctx& mer)
         r += s*x + t*xInv;
         n = nOver2;
         nOver2 /= 2;
-#ifdef DEBUGGING
-        CC += L*x + R*xInv;
-        Scalar ab = CRV25519::innerProduct(as, bs, n);
-        assert( verifyCom2(CC, gs, as, hs, bs, n, r, F, ab) );
-#endif
     }
     // base step for n==1
 
@@ -401,12 +330,6 @@ void proveQuadratic(QuadPfTranscript& pf, FlatQuadStmt& st, MerlinBPctx& mer)
     pf.a = as[0] +s*x;
     pf.b = bs[0] +t*x;
     pf.r = r + (u +v*x)*x;
-
-#ifdef DEBUGGING
-    dbg_x.push_back(x);
-    assert( CC +(pf.S1 +pf.S2*x)*x ==
-            Point::base()*pf.r +gs[0]*pf.a +hs[0]*pf.b +FF*(pf.a*pf.b));
-#endif
 }
 
 // The lower-level verifier function. This function modifies in place the
@@ -417,10 +340,6 @@ bool verifyQuadratic(QuadPfTranscript& pf, FlatQuadStmt& st, MerlinBPctx& mer)
     size_t original_n = n;
     Point* const gs = st.gs.data();
     Point* const hs = st.hs.data();
-#ifdef DEBUGGING
-    Point gs2[n], hs2[n];
-    for (size_t i=0; i<n; i++) { gs2[i]=gs[i]; hs2[i]=hs[i]; }
-#endif
 
     // Include the commitment to the witness
     mer.processPoint("C", pf.C);
@@ -428,10 +347,6 @@ bool verifyQuadratic(QuadPfTranscript& pf, FlatQuadStmt& st, MerlinBPctx& mer)
     // Get the generator F
     Point F = mer.newGenerator("F");
     Point C = pf.C + F*st.equalsTo;
-#ifdef DEBUGGING
-    Point CC = C;
-    assert(FF == F);
-#endif
 
     size_t logN = log2roundUp(n);
     if (pf.Ls.size() != logN || pf.Rs.size() != logN) {
@@ -452,13 +367,7 @@ bool verifyQuadratic(QuadPfTranscript& pf, FlatQuadStmt& st, MerlinBPctx& mer)
         mer.processPoint("R", R);
         Scalar& x = xes[ii] = mer.newChallenge("x");
         Scalar& xInv = xInvs[ii] = inverseOf(x); // xi^{-1}
-#ifdef DEBUGGING
-        assert(xes[ii] == dbg_x.at(ii));
-        assert(xInvs[ii] == dbg_xInv.at(ii));
-        CC += L*x + R*xInv;
-        foldGenerators(gs2, n, x, nOver2);
-        foldGenerators(hs2, n, xInv, nOver2);
-#endif
+
         n = nOver2;
         nOver2 /= 2;
         ++ii;
@@ -475,11 +384,7 @@ bool verifyQuadratic(QuadPfTranscript& pf, FlatQuadStmt& st, MerlinBPctx& mer)
     mer.processPoint("S1", pf.S1);
     mer.processPoint("S2", pf.S2);
     Scalar x = mer.newChallenge("x");
-#ifdef DEBUGGING
-    assert(x == dbg_x[dbg_x.size()-1]);
-    assert(gs[0]==gs2[0] && hs[0]==hs2[0]);
-    assert(C==CC);
-#endif
+
     return (C +(pf.S1 +pf.S2*x)*x ==
             Point::base()*pf.r +gs[0]*pf.a +hs[0]*pf.b +F*(pf.a*pf.b) );
 }
@@ -516,11 +421,17 @@ proveNormSquared(const std::string& tag, PtxtVec& vec) {
         st.equalsTo -= (x2i*x2i);
         x2i *= x;
     }
-#ifdef DEBUGGING
-    dbgX = x;
-    modifiedNorm = st.equalsTo;
-#endif
-    proveQuadratic(pf, st, mer);         // The actual proof
+    size_t n = st.gs.size();
+    Scalar* const as = st.wG.data(); // the a sitnesses
+    Scalar* const bs = st.wH.data(); // the b sitnesses
+    Point* const gs = st.gs.data();  // the G generators
+    Point* const hs = st.hs.data();  // the H generators
+
+    // Compute and push {"C": commitment to the xes}
+    Scalar r = CRV25519::randomScalar();
+    pf.C = DLPROOFS::commit2(gs, as, hs, bs, n, r); // commitment to the x'es and y's
+
+    proveQuadratic(pf, r, mer, gs, as, hs, bs, n);  // The actual proof
     return std::make_pair(cnstr.equalsTo, pf);
 }
 bool verifyNormSquared(const std::set<size_t>& indexes,
@@ -534,9 +445,6 @@ bool verifyNormSquared(const std::set<size_t>& indexes,
     // get a random challenge and use it to modify the quadratic constraints
     mer.processConstraint("normSquared", cnstr);
     Scalar x2 = mer.newChallenge("x");
-#ifdef DEBUGGING
-    assert(dbgX == x2);
-#endif
     x2 *= x2; // x^2
     Scalar xto2i = x2;
 
@@ -545,9 +453,6 @@ bool verifyNormSquared(const std::set<size_t>& indexes,
         st.equalsTo -= xto2i;
         xto2i *= x2;
     }
-#ifdef DEBUGGING
-    assert(modifiedNorm == st.equalsTo);
-#endif
     return verifyQuadratic(pf, st, mer);  // The actual verification
 }
 
