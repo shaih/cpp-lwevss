@@ -396,10 +396,7 @@ Scalar dbgX, modifiedNorm;
 // Norm proofs are similar to quadratic, but for the case of xs=ys. It gets
 // the vector, computes its norm, and convert to a quadratic proos using some
 // more challenges from the verifier. Returns the norm-squared and a proof.
-std::pair<Scalar,QuadPfTranscript>
-proveNormSquared(const std::string& tag, PtxtVec& vec) {
-    QuadPfTranscript pf(tag);
-    MerlinBPctx mer(tag);  // Make a Merlin state that includes the statement
+Scalar proveNormSquared(QuadPfTranscript& pf,MerlinBPctx& mer,PtxtVec& vec) {
 
     // initiate a QuadConstraint object
     QuadConstraint cnstr;
@@ -407,7 +404,7 @@ proveNormSquared(const std::string& tag, PtxtVec& vec) {
         cnstr.indexes.insert(cnstr.indexes.end(), elem.first);
         cnstr.equalsTo += (elem.second * elem.second);
     }
-    FlatQuadStmt st(tag, cnstr, vec, vec); // "Faltten" statement and witnesses
+    FlatQuadStmt st(pf.tag, cnstr, vec, vec); // "Faltten" statement and witnesses
 
     // get a random challenge and use it to modify the quadratic constraints
     mer.processConstraint("normSquared", cnstr);
@@ -432,7 +429,7 @@ proveNormSquared(const std::string& tag, PtxtVec& vec) {
     pf.C = DLPROOFS::commit2(gs, as, hs, bs, n, r); // commitment to the x'es and y's
 
     proveQuadratic(pf, r, mer, gs, as, hs, bs, n);  // The actual proof
-    return std::make_pair(cnstr.equalsTo, pf);
+    return cnstr.equalsTo;
 }
 bool verifyNormSquared(const std::set<size_t>& indexes,
                        const Scalar& normSq, QuadPfTranscript& pf) {

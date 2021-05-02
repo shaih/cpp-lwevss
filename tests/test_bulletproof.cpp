@@ -2,6 +2,8 @@
 #include "tests.hpp" // define strings LWEVSS_TESTS::passed and LWEVSS_TESTS::failed
 #include "bulletproof.hpp"
 
+using namespace DLPROOFS;
+
 bool test_linear() {
     for (size_t sz : {1,2,8,13}) {
         // build a constraint: sum_i ai*bi = b = \sum_bi^2
@@ -43,8 +45,10 @@ bool test_norm() {
             CRV25519::Scalar& x = xes[i] = CRV25519::Scalar().setInteger(i+1);
             indexes.insert(indexes.end(), i);
         }
-        auto [normSq, prNS] = DLPROOFS::proveNormSquared("blah", xes);
-        if (!verifyNormSquared(indexes,normSq,prNS))
+        QuadPfTranscript pfNS("blah");
+        MerlinBPctx mer(pfNS.tag);
+        Scalar normSq = DLPROOFS::proveNormSquared(pfNS, mer, xes);
+        if (!verifyNormSquared(indexes,normSq,pfNS))
             return false;
     }
     return true;

@@ -185,8 +185,7 @@ inline bool verifyQuadratic(const QuadConstraint& cnstr, QuadPfTranscript& pf) {
 // Norm proofs are similar to quadratic, but for the case of xs=ys. It gets
 // the vector, computes its norm, and convert to a quadratic proos using some
 // more challenges from the verifier. Returns the norm-squared and a proof.
-std::pair<Scalar,QuadPfTranscript>
-proveNormSquared(const std::string& tag, PtxtVec& vec);
+Scalar proveNormSquared(QuadPfTranscript& pf, MerlinBPctx& mer, PtxtVec& vec);
 bool verifyNormSquared(const std::set<size_t>& indexes,
                        const Scalar& normS, QuadPfTranscript& pf);
 
