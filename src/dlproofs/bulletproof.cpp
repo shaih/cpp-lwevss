@@ -45,7 +45,7 @@ Point FF;
 
 // Flatten a linear statement, writing explicitly the generators and
 // public exponents (and optionally the witness) in simple vectors.
-FlatLinStmt::FlatLinStmt(const std::string& label,
+FlatLinStmt::FlatLinStmt(const PedersenContext& ped,
                const LinConstraint& cnstr, const PtxtVec& xes) {
     // Check that the indexes match, and pack everything in simple
     // arrays that are easier to loop over
@@ -63,7 +63,6 @@ FlatLinStmt::FlatLinStmt(const std::string& label,
     generators.reserve(n);
 
     // Record/copy all the points/scalars
-    PedersenContext ped(label);
     auto it1 = xes.begin();
     for (auto it2 = cnstr.terms.begin(); it2 != cnstr.terms.end(); ++it2) {
         size_t idx = it2->first;
@@ -85,7 +84,7 @@ FlatLinStmt::FlatLinStmt(const std::string& label,
 
 // Flatten a quadratic statement, writing explicitly the generators
 // (and optionally the witnesses) in simple vectors.
-FlatQuadStmt::FlatQuadStmt(const std::string& label,
+FlatQuadStmt::FlatQuadStmt(const PedersenContext& ped,
         const QuadConstraint& cnstr, const PtxtVec& xes, const PtxtVec& ys) {
     size_t n = cnstr.indexes.size();
     size_t n2 = xes.size();
@@ -98,7 +97,6 @@ FlatQuadStmt::FlatQuadStmt(const std::string& label,
     }
     gs.reserve(n);
     hs.reserve(n);
-    PedersenContext ped(label);
     auto it1 = xes.begin();
     auto it2 = ys.begin();
     for (auto idx : cnstr.indexes) { // compute the i'th generators
@@ -404,7 +402,8 @@ Scalar proveNormSquared(QuadPfTranscript& pf,MerlinBPctx& mer,PtxtVec& vec) {
         cnstr.indexes.insert(cnstr.indexes.end(), elem.first);
         cnstr.equalsTo += (elem.second * elem.second);
     }
-    FlatQuadStmt st(pf.tag, cnstr, vec, vec); // "Faltten" statement and witnesses
+    PedersenContext ped(pf.tag);
+    FlatQuadStmt st(ped, cnstr, vec, vec); // "Faltten" statement and witnesses
 
     // get a random challenge and use it to modify the quadratic constraints
     mer.processConstraint("normSquared", cnstr);
@@ -437,7 +436,8 @@ bool verifyNormSquared(const std::set<size_t>& indexes,
 
     // initiate a QuadConstraint object
     QuadConstraint cnstr{indexes, normSq};
-    FlatQuadStmt st(pf.tag, cnstr);   // "Faltten" the statement
+    PedersenContext ped(pf.tag);
+    FlatQuadStmt st(ped, cnstr);   // "Faltten" the statement
 
     // get a random challenge and use it to modify the quadratic constraints
     mer.processConstraint("normSquared", cnstr);

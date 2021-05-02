@@ -59,7 +59,7 @@ struct FlatLinStmt {
     std::vector<Scalar> witness;
 
     FlatLinStmt() = default;
-    FlatLinStmt(const std::string& label,
+    FlatLinStmt(const PedersenContext& ped,
                 const LinConstraint& cnstr, const PtxtVec& xes=PtxtVec());
 };
 
@@ -85,9 +85,10 @@ inline LinPfTranscript proveLinear(const std::string& tag,
                     const LinConstraint& cnstr, const PtxtVec& xes) {
     LinPfTranscript proof(tag);
     MerlinBPctx mer(tag);  // Make a Merlin state that includes the statement
+    PedersenContext ped(tag);
     mer.processConstraint("constraint", cnstr); 
 
-    FlatLinStmt st(tag, cnstr, xes); // "Faltten" the statement and witness
+    FlatLinStmt st(ped, cnstr, xes); // "Faltten" the statement and witness
  
     // Compute and push {"C": commitment to the xes}
     Scalar r = CRV25519::randomScalar();
@@ -104,9 +105,10 @@ inline LinPfTranscript proveLinear(const std::string& tag,
 
 inline bool verifyLinear(const LinConstraint& cnstr, LinPfTranscript& proof) {
     MerlinBPctx mer(proof.tag); // Make a Merlin state that includes the statement
+    PedersenContext ped(proof.tag);
     mer.processConstraint("constraint", cnstr); 
 
-    FlatLinStmt st(proof.tag, cnstr);   // "Faltten" the statement
+    FlatLinStmt st(ped, cnstr);   // "Faltten" the statement
     return verifyLinear(proof, st, mer);  // The actual verification
 }
 
@@ -133,7 +135,7 @@ struct FlatQuadStmt {
     std::vector<Scalar> wG, wH;
 
     FlatQuadStmt() = default;
-    FlatQuadStmt(const std::string& label, const QuadConstraint& cnstr,
+    FlatQuadStmt(const PedersenContext& ped, const QuadConstraint& cnstr,
             const PtxtVec& xes=PtxtVec(), const PtxtVec& ys=PtxtVec());
 };
 // The transcript of a quadratic bulletproof-like proof
@@ -158,8 +160,9 @@ inline QuadPfTranscript proveQuadratic(const std::string& tag,
         const QuadConstraint& cnstr, const PtxtVec& xs, const PtxtVec& ys) {
     QuadPfTranscript pf(tag);
     MerlinBPctx mer(tag);  // Make a Merlin state that includes the statement
+    PedersenContext ped(tag);
     mer.processConstraint("constraint", cnstr); 
-    FlatQuadStmt st(tag, cnstr, xs, ys); // "Faltten" statement and witnesses
+    FlatQuadStmt st(ped, cnstr, xs, ys); // "Faltten" statement and witnesses
 
     size_t n = st.gs.size();
     Scalar* const as = st.wG.data(); // the a sitnesses
@@ -177,8 +180,9 @@ inline QuadPfTranscript proveQuadratic(const std::string& tag,
 
 inline bool verifyQuadratic(const QuadConstraint& cnstr, QuadPfTranscript& pf) {
     MerlinBPctx mer(pf.tag); // Make a Merlin state that includes the statement
-    mer.processConstraint("constraint", cnstr); 
-    FlatQuadStmt st(pf.tag, cnstr);   // "Faltten" the statement
+    mer.processConstraint("constraint", cnstr);
+    PedersenContext ped(pf.tag);
+    FlatQuadStmt st(ped, cnstr);   // "Faltten" the statement
     return verifyQuadratic(pf, st, mer);  // The actual verification
 }
 

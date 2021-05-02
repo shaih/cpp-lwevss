@@ -129,11 +129,11 @@ struct PedersenContext {
     //std::vector<unsigned char> key;
     explicit PedersenContext(const std::string& t=std::string()): tag(t) {};
 
-    const Point getG(int i) { // returns G_i
+    const Point getG(int i) const { // returns G_i
         std::string label = tag+"G"+std::to_string(i);
         return hashToCurve((unsigned char*)label.data(), label.size());
     }
-    const Point getH(int i) { // returns H_i
+    const Point getH(int i) const { // returns H_i
         std::string label = tag+"H"+std::to_string(i);
         return hashToCurve((unsigned char*)label.data(), label.size());
     }
