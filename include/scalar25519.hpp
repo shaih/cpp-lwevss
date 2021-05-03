@@ -108,6 +108,16 @@ public:
         return Scalar(*this).operator*=(other);
     }
 
+    // Compute division
+    Scalar& operator/=(const Scalar& other) {
+        Scalar tmp = other;
+        tmp.invert();
+        return (*this *= tmp);
+    }
+    Scalar operator/(const Scalar& other) const {
+        return Scalar(*this).operator/=(other);
+    }
+
     // Computes *this modulo |other|. Both arguments are interpreted
     // as signed integers in the range [-P/2,P/2), the result is set
     // in the range [-|other|/2, |other|/2), then mapped to Z_P.

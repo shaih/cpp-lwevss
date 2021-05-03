@@ -68,6 +68,10 @@ static bool test_Scalar() {
         return false;
     if (r1 * inverseOf(r1) != one)
         return false;
+    if (r1 / r1 != one)
+        return false;
+    if (one / r1 != inverseOf(r1))
+        return false;
 
     return testMod();
 }
