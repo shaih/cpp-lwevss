@@ -171,6 +171,46 @@ static void setDifference(LinConstraint& c1, const QuadConstraint& c2)
     }
 }
 
+// Split the src map into the intersection with teh sliptBy set and
+// the set-difference between them. Return an index one larger than
+// the max index in src and splitBy
+size_t splitPtxtVec(PtxtVec& intersection, PtxtVec& setDiff,
+                const PtxtVec& src, const std::set<size_t>& splitBy)
+{
+    intersection.clear();
+    setDiff.clear();
+    // edge cases, if one or both of src,splitBy are empty
+    if (src.empty()) {
+        if (splitBy.empty()) return 1;
+        else return 1 + *(splitBy.rbegin()); // largest element +1
+    }
+    if (splitBy.empty()) {
+        setDiff = src;
+        return 1 + src.rbegin()->first;
+    }
+    // general case, iterate over src and splitBy
+    auto it1 = src.begin();
+    auto it2 = splitBy.begin();
+    while (it1 != src.end() && it2 != splitBy.end()) {
+        // Elements in src but not splitBy go to setDiff
+        if (it1->first < *it2) {
+            setDiff.insert(setDiff.end(), *it1);
+            ++it1;
+        }
+        else if (*it2 < it1->first) // ignore things not in src
+            ++it2;
+        else { // found an element that appears in both
+            intersection.insert(intersection.end(), *it1);
+            ++it1; ++it2; // advance both iterators
+        }
+    }
+    // put the remaining of src (if any) in setDiff
+    if (it1 != src.end())
+        setDiff.insert(it1, src.end());
+
+    return std::max(src.rbegin()->first, *(splitBy.rbegin())) +1;
+}
+
 // Removes from the linear constraint all variables that also appear in
 // the quadratic constraint. This function intoruces one more variable
 // that was not in the original constraints, which will appear in both

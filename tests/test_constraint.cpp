@@ -6,6 +6,25 @@
 
 using namespace DLPROOFS;
 
+bool test_splitBy()
+{
+    PtxtVec vec = {
+        {1, Scalar().setInteger(1)},
+        {3, Scalar().setInteger(3)},
+        {4, Scalar().setInteger(4)},
+        {6, Scalar().setInteger(6)},
+        {8, Scalar().setInteger(8)},
+        {10, Scalar().setInteger(10)}
+    };
+    std::set<size_t> idxSet = {2, 3, 4, 5, 7};
+    PtxtVec intersection, setDiff;
+    size_t nextIdx = splitPtxtVec(intersection, setDiff, vec, idxSet);
+    if (intersection != PtxtVec{{3,Scalar().setInteger(3)},{4,Scalar().setInteger(4)}})
+        return false;
+    if (setDiff!= PtxtVec{{1,Scalar().setInteger(1)},{6, Scalar().setInteger(6)},{8, Scalar().setInteger(8)},{10, Scalar().setInteger(10)}})
+        return false;
+    return (nextIdx == 11);
+}
 static bool test_Constraints()
 {
     // merge constraints
@@ -150,7 +169,7 @@ static bool test_Constraints()
 }
 
 int main(int, char**) {
-    if (!test_Constraints())
+    if (!test_Constraints() || !test_splitBy())
         std::cout << LWEVSS_TESTS::failed << std::endl;
     else
         std::cout << LWEVSS_TESTS::passed << std::endl;        

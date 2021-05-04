@@ -51,4 +51,9 @@ inline std::ostream& operator<<(std::ostream& st, const std::set<int>& intSet){
     for (auto i: intSet) st << i << ' ';
     return st << '}';
 }
+inline std::ostream& operator<<(std::ostream& st, const std::set<size_t>& intSet){
+    st << '{';
+    for (auto i: intSet) st << i << ' ';
+    return st << '}';
+}
 #endif // ifndef _UTILS_HPP_

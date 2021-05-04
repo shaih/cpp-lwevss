@@ -169,6 +169,12 @@ inline int largestKey(const QuadConstraint& c) {
     return (c.indexes.empty()? -1 : *(c.indexes.rbegin()));
 }
 
+// Split the src map into the intersection with teh sliptBy set and
+// the set-difference between them. Return an index one larger than
+// the max index in src and splitBy
+size_t splitPtxtVec(PtxtVec& intersection, PtxtVec& setDiff,
+                const PtxtVec& src, const std::set<size_t>& splitBy);
+
 // Remove from the linear constraint all variables that also appear in
 // the quadratic constraint. This function intoruces one more variable
 // that was not in the original constraints, which will appear in both
