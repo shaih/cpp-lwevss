@@ -72,6 +72,16 @@ struct MerlinBPctx { // A wrapper object around the "C" merlin_transcript
             (const unsigned char *)label.data(), label.size(),
             s.dataBytes(), crypto_core_ed25519_SCALARBYTES);
     }
+    void processScalarVector(const std::string& label, CRV25519::Scalar* v, int n) {
+        if (n<=0) return;
+        merlin_transcript_commit_bytes(&mctx,
+            (const unsigned char *)label.data(), label.size(),
+            v[0].dataBytes(), crypto_core_ed25519_SCALARBYTES);
+        for (int i=1; i<n; i++) {
+            merlin_transcript_commit_bytes(&mctx, nullptr, 0,
+            v[i].dataBytes(), crypto_core_ed25519_SCALARBYTES);
+        }
+    }
 
     // Add a labeled group element to the current state
     void processPoint(const std::string& label, const CRV25519::Point& p) { 
