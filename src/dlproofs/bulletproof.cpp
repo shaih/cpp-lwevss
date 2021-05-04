@@ -50,7 +50,7 @@ FlatLinStmt::FlatLinStmt(const PedersenContext& ped,
     // Check that the indexes match, and pack everything in simple
     // arrays that are easier to loop over
     size_t n = cnstr.terms.size();
-    size_t n2 = xes.size();
+    size_t n2 = xes.size();   // n2==0 when witness is not specified
     if (n<1 || n > 1UL<<20) { // size between 1 and 1 million
         throw std::runtime_error("FlatLinStmt: proof size must be between 1 and 2^20");
     }
@@ -66,7 +66,7 @@ FlatLinStmt::FlatLinStmt(const PedersenContext& ped,
     auto it1 = xes.begin();
     for (auto it2 = cnstr.terms.begin(); it2 != cnstr.terms.end(); ++it2) {
         size_t idx = it2->first;
-        if (n2>0) {
+        if (n2>0) { // if witness is specified then the keys must match
             if (it1->first != idx)
                 throw std::runtime_error("proveLinear: witness and constraint keys not equal");
             witness.push_back(it1->second);
@@ -87,7 +87,7 @@ FlatLinStmt::FlatLinStmt(const PedersenContext& ped,
 FlatQuadStmt::FlatQuadStmt(const PedersenContext& ped,
         const QuadConstraint& cnstr, const PtxtVec& xes, const PtxtVec& ys) {
     size_t n = cnstr.indexes.size();
-    size_t n2 = xes.size();
+    size_t n2 = xes.size();   // n2==0 when witness is not specified
     if (n<1 || n > 1UL<<20) { // size between 1 and 1 million
         throw std::runtime_error("FlatQuadStmt: proof size must be between 1 and 2^20");
     }
@@ -102,7 +102,7 @@ FlatQuadStmt::FlatQuadStmt(const PedersenContext& ped,
     for (auto idx : cnstr.indexes) { // compute the i'th generators
         gs.push_back(ped.getG(idx));
         hs.push_back(ped.getH(idx));
-        if (n2>0) { // witness is provided, store it as well
+        if (n2>0) { // if witness is provided, store it as well
             if (it1->first != idx || it2->first != idx)
                 throw std::runtime_error("FlatQuadStmt: witness and constraint keys not equal");
             wG.push_back(it1->second);
@@ -124,7 +124,7 @@ FlatQuadStmt::FlatQuadStmt(const PedersenContext& ped,
 // The lower-level prover function. This function modifies in place the lists
 // of points and scalars in the FlatLinStmt while generating the proof. It
 // assumes that the commitment to the secret is already included in proof.C,
-// and te randomness for that commitment is the scalar r.
+// and the randomness for that commitment is the scalar r.
 void proveLinear(LinPfTranscript& proof, Scalar r, MerlinBPctx& mer,
         Scalar* const as, Scalar* const bs, Point* const gs, size_t n) {
     // push {"C": commitment to the xes}
@@ -183,8 +183,11 @@ void proveLinear(LinPfTranscript& proof, Scalar r, MerlinBPctx& mer,
 }
 
 // The lower-level verifier function. Modifies in place the lists of
-// points and scalars in the FlatLinStmt while generating the proof
-bool verifyLinear(LinPfTranscript& proof, FlatLinStmt& st, MerlinBPctx& mer) {
+// points and scalars in the FlatLinStmt while generating the proof.
+// If the optional wOffsets is specified, then proof.C is a commitment
+// to witness+wOffset rather than to the witness itself.
+bool verifyLinear(LinPfTranscript& proof, FlatLinStmt& st, MerlinBPctx& mer,
+                  Scalar *wOffsets) {
     size_t n = st.generators.size();
     size_t original_n = n;
     Scalar* const bs = st.statement.data(); // these are the constraints
@@ -219,7 +222,7 @@ bool verifyLinear(LinPfTranscript& proof, FlatLinStmt& st, MerlinBPctx& mer) {
 
         // We will later need to compute the multi-exponentiation
         //    \sum_i Li*xi^{-1} + Ri*xi,
-        // so we store the xi's and their inverses in teh challenges
+        // so we store the xi's and their inverses in the challenges
         // array in the order that matches the L's and R's in the proof.
 
         // Update the first half of the bs
@@ -235,14 +238,20 @@ bool verifyLinear(LinPfTranscript& proof, FlatLinStmt& st, MerlinBPctx& mer) {
     C += multiExp(proof.Ls.data(), proof.Ls.size(), xes)
        + multiExp(proof.Rs.data(), proof.Rs.size(), xInvs);
 
-    expSubsetProduct(gs, original_n, xes);
-
     // include the point S in the Merlin transcript
     mer.processPoint("S", proof.S);
 
     // final challenge x
     Scalar x = mer.newChallenge("x");
-    return ( proof.S + C*x == Point::base()*proof.r + F*(proof.a*bs[0]) + gs[0]*proof.a );
+    Scalar xInv = inverseOf(x);
+
+    // compute \sum Gi*(a*zi +x*wOffset[i]) where the zi's are the
+    // subset products of the xes.
+    if (wOffsets)
+        for (size_t i=0; i<original_n; i++) wOffsets[i] *= x;
+    Point tmp = expSubsetProduct(gs, original_n, xes, proof.a, wOffsets);
+
+    return ( proof.S + C*x == Point::base()*proof.r + F*(proof.a*bs[0]) + tmp );
 }
 
 /*******************************************************************/
@@ -330,9 +339,12 @@ void proveQuadratic(QuadPfTranscript& pf, Scalar r, MerlinBPctx& mer,
     pf.r = r + (u +v*x)*x;
 }
 
-// The lower-level verifier function. This function modifies in place the
-// list of points in the FlatQuadStmt while verifying the proof
-bool verifyQuadratic(QuadPfTranscript& pf, FlatQuadStmt& st, MerlinBPctx& mer)
+// The lower-level verifier function. This function modifies in place
+// the list of points in the FlatQuadStmt while verifying the proof
+// If the optional uOffsets, vOffsets are specified, then proof.C is
+// a commitment to u+uOffset, v+vOffset rather than to u,v themselves.
+bool verifyQuadratic(QuadPfTranscript& pf, FlatQuadStmt& st, MerlinBPctx& mer,
+                     Scalar *uOffsets, Scalar *vOffsets)
 {
     size_t n = st.gs.size();
     size_t original_n = n;
@@ -375,8 +387,10 @@ bool verifyQuadratic(QuadPfTranscript& pf, FlatQuadStmt& st, MerlinBPctx& mer)
     C += multiExp(pf.Ls.data(), pf.Ls.size(), xes)
        + multiExp(pf.Rs.data(), pf.Rs.size(), xInvs);
 
-    expSubsetProduct(gs, original_n, xes);
-    expSubsetProduct(hs, original_n, xInvs);
+    // compute \sum Gi(a*yi +uOffset[i]) and \sum Hi(b*zi +vOffset[i])
+    // where the yi,zi's are the subset products of the x'es and xInv's.
+    Point tmpG = expSubsetProduct(gs, original_n, xes, pf.a, uOffsets);
+    Point tmpH = expSubsetProduct(hs, original_n, xInvs, pf.b, vOffsets);
 
     // final challenge x
     mer.processPoint("S1", pf.S1);
@@ -384,7 +398,7 @@ bool verifyQuadratic(QuadPfTranscript& pf, FlatQuadStmt& st, MerlinBPctx& mer)
     Scalar x = mer.newChallenge("x");
 
     return (C +(pf.S1 +pf.S2*x)*x ==
-            Point::base()*pf.r +gs[0]*pf.a +hs[0]*pf.b +F*(pf.a*pf.b) );
+            Point::base()*pf.r +tmpG +tmpH +F*(pf.a*pf.b) );
 }
 
 #ifdef DEBUGGING

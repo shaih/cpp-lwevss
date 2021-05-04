@@ -78,8 +78,10 @@ struct LinPfTranscript {
 // of points and scalars in the FlatLinStmt while processing the proof
 void proveLinear(LinPfTranscript& proof, Scalar r, MerlinBPctx& mer,
         Scalar* const as, Scalar* const bs, Point* const gs, size_t n);
-//void proveLinear(LinPfTranscript& pf, FlatLinStmt& st, MerlinBPctx& m, Scalar& r);
-bool verifyLinear(LinPfTranscript& pf, FlatLinStmt& st, MerlinBPctx& m);
+bool verifyLinear(LinPfTranscript& pf, FlatLinStmt& st,
+                  MerlinBPctx& m, Scalar* wOffsets=nullptr);
+    // If the optional wOffsets is specified, then proof.C is a
+    // commitment to witness+wOffset rather than to the witness itself.
 
 inline LinPfTranscript proveLinear(const std::string& tag, 
                     const LinConstraint& cnstr, const PtxtVec& xes) {
@@ -153,8 +155,10 @@ struct QuadPfTranscript {
 // of points and scalars in the FlatQuadStmt while processing the proof
 void proveQuadratic(QuadPfTranscript& pf, Scalar r, MerlinBPctx& m, 
                     Point* gs, Scalar* as, Point* hs, Scalar* bs, size_t n);
-//void proveQuadratic(QuadPfTranscript& pf, FlatQuadStmt& st, MerlinBPctx& m);
-bool verifyQuadratic(QuadPfTranscript& pf, FlatQuadStmt& st, MerlinBPctx& m);
+bool verifyQuadratic(QuadPfTranscript& pf, FlatQuadStmt& st, MerlinBPctx& m,
+                     Scalar* uOffsets=nullptr, Scalar* vOffsets=nullptr);
+    // If the optional uOffsets, vOffsets are specified, then proof.C is
+    // a commitment to u+uOffset, v+vOffset rather than to u,v themselves.
 
 inline QuadPfTranscript proveQuadratic(const std::string& tag,
         const QuadConstraint& cnstr, const PtxtVec& xs, const PtxtVec& ys) {
@@ -165,8 +169,8 @@ inline QuadPfTranscript proveQuadratic(const std::string& tag,
     FlatQuadStmt st(ped, cnstr, xs, ys); // "Faltten" statement and witnesses
 
     size_t n = st.gs.size();
-    Scalar* const as = st.wG.data(); // the a sitnesses
-    Scalar* const bs = st.wH.data(); // the b sitnesses
+    Scalar* const as = st.wG.data(); // the a witnesses
+    Scalar* const bs = st.wH.data(); // the b witnesses
     Point* const gs = st.gs.data();  // the G generators
     Point* const hs = st.hs.data();  // the H generators
 

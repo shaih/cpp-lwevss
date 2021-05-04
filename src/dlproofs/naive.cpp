@@ -55,7 +55,7 @@ void foldGenerators(Point* Gs, size_t n, const Scalar& x, size_t nOver2) {
 
 // compute \sum_i Gi*zi, where the zi's are the subset products of the
 // xi's, modifies the generators in Gs and returns the result in Gs[0]
-void expSubsetProduct(Point* Gs, size_t n, const Scalar* xes) {
+void expSubsetProduct2(Point* Gs, size_t n, const Scalar* xes) {
     size_t logn = log2roundUp(n);     // this is the number of xes
     size_t nOver2 = 1UL << (logn-1);
     for (size_t i=0; i<logn; i++) {
@@ -64,5 +64,38 @@ void expSubsetProduct(Point* Gs, size_t n, const Scalar* xes) {
         nOver2 /= 2;
     }
 }
+
+void subsetProdRecurse(Scalar *vec, size_t n, const Scalar* basis, size_t basisLen) {
+    if (n<=1)
+        return;
+    size_t logn = log2roundUp(n);     // this is the number of xes
+    size_t nOver2 = 1UL << (logn-1);
+    for (size_t i=nOver2; i<n; i++)
+        vec[i] *= basis[basisLen -logn];
+    subsetProdRecurse(vec+nOver2, n-nOver2, basis, basisLen);
+    subsetProdRecurse(vec, nOver2, basis, basisLen);
+}
+
+// compute all the subset products of te basis scalars, times a
+void subsetProduct(Scalar *vec, size_t n, const Scalar* basis, size_t basisLen,
+                   const Scalar& a) {
+    for (size_t i=0; i<n; i++)
+        vec[i] = a;
+    subsetProdRecurse(vec, n, basis, basisLen);
+}
+
+// compute \sum_i Gi*zi, where the zi's are the subset products of the xi's
+// times a. If offsets are specified then return \sum_i Gi*(zi+offsets[i])
+Point expSubsetProduct(const Point* Gs, size_t n, const Scalar* xes,
+                       const Scalar& a, Scalar* offsets) {
+    size_t logn = log2roundUp(n);     // this is the number of xes
+    Scalar prods[n];
+    subsetProduct(prods, n, xes, logn, a);
+    if (offsets != nullptr) {
+        for (int i=0; i<n; i++) prods[i] += offsets[i];
+    }
+    return multiExp(Gs, n, prods);
+}
+
 
 } // end of namespace DLPROOFS

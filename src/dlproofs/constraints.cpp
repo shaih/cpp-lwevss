@@ -136,6 +136,23 @@ void LinConstraint::merge(const std::vector<LinConstraint>& constraints,
     }
 }
 
+void QuadConstraint::merge(const std::vector<QuadConstraint>& constraints,
+                           const std::vector<Scalar>& coeffs)
+{
+    if (constraints.size() != coeffs.size())
+        throw std::runtime_error("QuadConstraint::merge argument mismatch");
+
+    indexes.clear();
+    equalsTo = Scalar(); // init to zero
+    for (size_t i=0; i<constraints.size(); i++) {
+        const Scalar& coeff = coeffs[i];
+        const QuadConstraint& cnstr = constraints[i];
+        // Add the terms from constraints[i] to *this
+        indexes.insert(cnstr.indexes.begin(), cnstr.indexes.end());
+        equalsTo += cnstr.equalsTo * coeff * coeff;
+    }
+}
+
 // Remove from c1 all the keys that appear also in c2
 static void setDifference(LinConstraint& c1, const QuadConstraint& c2)
 {

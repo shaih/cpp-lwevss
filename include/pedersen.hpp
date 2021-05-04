@@ -97,9 +97,17 @@ void multiBaseOneExp(Point* Gs, size_t n, const Scalar& x);
 // with Gs=(Gs1|Gs2), set Gs1 += Gs2 * x
 void foldGenerators(Point* Gs, size_t n, const Scalar& x, size_t nOver2);
 
-// compute \sum_i Gi*zi, where the zi's are the subset products of the
-// xi's, modifies the generators in Gs and returns the result in Gs[0]
-void expSubsetProduct(Point* Gs, size_t n, const Scalar* xes);
+// Fills vec with all the subset products of the basis scalars, times a
+void subsetProduct(Scalar *vec, size_t n,
+                   const Scalar* basis, size_t basisLen, const Scalar& a);
+
+// compute \sum_i Gi*zi, where the zi's are the subset products of the xi's
+// times a. If offsets are specified then return \sum_i Gi*(zi+offsets[i])[i]).
+Point expSubsetProduct(const Point* Gs, size_t n, const Scalar* xes,
+                    const Scalar& a, Scalar* offsets=nullptr);
+
+// old version modifies the generators in Gs and returns the result in Gs[0]
+void expSubsetProduct2(Point* Gs, size_t n, const Scalar* xes);
 
 // Functions for commitment/de-commitment
 

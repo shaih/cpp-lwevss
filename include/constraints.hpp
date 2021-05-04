@@ -154,6 +154,11 @@ public:
     // Merge two quadratic constraints, throws if they are not disjoint
     QuadConstraint& operator+=(const QuadConstraint& other);
 
+    // Merges multiple *disjoint* constraints by taking a linear combination
+    // of them. The resulting constraint has indexes which is the disjoint
+    // union, and equaltsTo = \sum_i equalsTo[i]*coeffs[i]^2.
+    void merge(const std::vector<QuadConstraint>& constraints, const std::vector<Scalar>& coeffs);
+
     void debugPrint() const;
 };
 

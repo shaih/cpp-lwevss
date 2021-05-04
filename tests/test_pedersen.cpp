@@ -99,18 +99,42 @@ bool testExpSubProd() {
     prods[6] = exps[0] * exps[1];
     prods[7] = exps[0] * exps[1] * exps[2];
 
+    std::vector<Scalar> prods8(8);
+    subsetProduct(prods8.data(), 6, exps.data(), 3, prods[0]);
+    for (int i=0; i<6; i++) {
+        if (prods8[i] != prods[i])
+            return false;
+    }
+    subsetProduct(prods8.data(), 8, exps.data(), 3, prods[0]);
+    for (int i=0; i<8; i++) {
+        if (prods8[i] != prods[i])
+            return false;
+    }
+
     // check for both length-8 and length-6 vectors
     std::vector<Point> Gs(8, Point::base()); // a vector of generators
     for (size_t i=0; i<Gs.size(); i++) {
         Gs[i] *= Scalar().setInteger(i+1); // G[i] = B*(i+1)
     }
 
-    Point p6 = multiExp(Gs.data(), 6, prods.data());
-    Point p8 = multiExp(Gs.data(), 8, prods.data());
-    auto Gcopy = Gs; // because expSubsetProduct modifies the data
-    expSubsetProduct(Gs.data(), 6, exps.data());    // result in Gs[0]
-    expSubsetProduct(Gcopy.data(), 6, exps.data()); // result in Gcopy[0]
-    return (Gs[0] == p6 && Gcopy[0] == p8);
+    Point p5 = expSubsetProduct(Gs.data(), 5, exps.data(), prods[0]);
+    if (p5 != multiExp(Gs.data(), 5, prods.data()))
+        return false;
+
+    Scalar r = CRV25519::randomScalar();
+    std::vector<Scalar> offsets(8);
+    for (size_t i=0; i<8; i++) offsets[i].setInteger(i);
+
+    Point p6 = expSubsetProduct(Gs.data(), 6, exps.data(), r,
+                offsets.data());
+    if (p6 != multiExp(Gs.data(),6,prods.data())*r +multiExp(Gs.data(),6,offsets.data()))
+        return false;
+
+    Point p8 = expSubsetProduct(Gs.data(), 8, exps.data(), r, offsets.data());
+    if (p8 != multiExp(Gs.data(),8,prods.data())*r +multiExp(Gs.data(),8,offsets.data()))
+        return false;
+
+    return true;
 }
 /*
 Point commit(const Point* Gs, const Scalar* xes, size_t n, const Scalar& r,
