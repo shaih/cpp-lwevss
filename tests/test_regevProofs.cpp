@@ -366,8 +366,52 @@ bool test_proofs() {
             return false;
     }}
 
+    // aggregate the constraints and flatten everything before proving
     ReadyToProve rtp;
     rtp.aggregateProver(pd);
+
+    // Make copies of the Merlin transcripts and specialize them
+    // for the final constraints before proving/verifying them
+    auto merLin = *vd.mer;
+    merLin.processConstraint("linear", rtp.linCnstr);
+
+    auto merQuad = *vd.mer;
+    merQuad.processConstraint("quadratic", rtp.quadCnstr);
+
+    // Flatten the statements, this relases the memory of the constraints
+    // (hence the Merlin processing above must be done before doing this).
+    rtp.flattenLinPrv(vd);
+    rtp.flattenQuadPrv(vd);
+
+    ReadyToVerify rtv = rtp; // a copy without the secret variables
+
+    // prove and verify the linear statement
+    auto merLinVer = merLin; // another copy for verification
+    DLPROOFS::LinPfTranscript pfL("Linear");
+    pfL.C = rtp.linCom;
+
+    // The actual proof
+    DLPROOFS::proveLinear(pfL, rtp.lComRnd, merLin, rtp.linWtns.data(),
+            rtp.linStmnt.data(), rtp.linGs.data(), rtp.linGs.size());
+    // The actual verification
+    if (!DLPROOFS::verifyLinear(pfL, rtv.linStmnt.data(), rtv.linGs.data(),
+                      rtv.linGs.size(), rtv.linCnstr.equalsTo, merLinVer))
+        return false;
+
+    // prove and verify the quadratic statement
+    auto merQuadVer = merQuad; // another copy for verification
+    DLPROOFS::QuadPfTranscript pfQ("Quadratic");
+    pfQ.C = rtp.quadCom;
+     // The actual proof
+    DLPROOFS::proveQuadratic(pfQ, rtp.qComRnd, merQuad, rtp.quadGs.data(),
+                rtp.quadWtnsG.data(), rtp.quadHs.data(), rtp.quadWtnsH.data(),
+                rtp.quadGs.size());
+    // The actual verification
+    if (!DLPROOFS::verifyQuadratic(pfQ, rtv.quadGs.data(), rtv.quadHs.data(),
+                        rtp.quadGs.size(), rtv.quadCnstr.equalsTo, merQuadVer,
+                        rtv.offstG.data(), rtv.offstH.data()))
+        return false;
+
     return true;
 }
 

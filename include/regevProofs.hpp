@@ -377,6 +377,7 @@ void proveSmallness(ProverData& pd);
 void verifySmallness(VerifierData& vd);
 
 struct ReadyToVerify {
+    // The linear and quadratic constraints and commitments
     DLPROOFS::LinConstraint linCnstr;
     Point linCom;
     DLPROOFS::QuadConstraint quadCnstr;
@@ -385,22 +386,36 @@ struct ReadyToVerify {
     // The offset used for the G, H witnesses in the quadratic proof
     DLPROOFS::PtxtVec deltaG, deltaH;
 
+    // temporary variables used in aggregating the proofs
     std::vector<CRV25519::Scalar> rVec, uVec;
     DLPROOFS::PtxtVec as, bs;
-#ifndef DEBUGGING // these will be used in the normal settings
+
+    // Flattened versions of the statements and generators
+    std::vector<Point> linGs;
+    std::vector<CRV25519::Scalar> linStmnt;
+
+    std::vector<Point> quadGs;
+    std::vector<Point> quadHs;
+    std::vector<CRV25519::Scalar> offstG;
+    std::vector<CRV25519::Scalar> offstH;
+
     void aggregateVerifier1(VerifierData& vd);
     void aggregateVerifier2(VerifierData& vd);
-#endif
+
+    void flattenLinVer(VerifierData& vd);
+    void flattenQuadVer(VerifierData& vd);
 };
 struct ReadyToProve : public ReadyToVerify {
     CRV25519::Scalar lComRnd, qComRnd;
     DLPROOFS::PtxtVec linWitness, quadWitnessG, quadWitnessH;
 
+    // Flattened versions of the witnesses
+    std::vector<CRV25519::Scalar> linWtns;
+    std::vector<CRV25519::Scalar> quadWtnsG, quadWtnsH;
+
     void aggregateProver(ProverData& pd);
-#ifdef DEBUGGING // these include debugging code that needs some of the prover state
-    void aggregateVerifier1(ProverData& pd);
-    void aggregateVerifier2(ProverData& pd);
-#endif
+    void flattenLinPrv(VerifierData& vd);
+    void flattenQuadPrv(VerifierData& vd);
 };
 
 
