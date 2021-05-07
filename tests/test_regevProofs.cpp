@@ -115,6 +115,7 @@ void expandConstraints(LinConstraint* constrs, int idx,
 void makeConstraints(LinConstraint* constrs, int idx,
                      const ALGEBRA::EVector& v, int from=0, int to=-1);
 */
+
 bool test_constraints() {
     // choose secret variables, one vector over Z_p and one over GF(p^e)
     SVector sVec; resize(sVec,3);
@@ -195,42 +196,6 @@ bool test_constraints() {
     return true;
 }
 
-
-static bool checkQuadConstrain(DLPROOFS::QuadConstraint& c,
-    const TwoPoints& coms, const TwoPoints& padComs, const TwoScalars& rnds,
-    const TwoScalars& padRnds, DLPROOFS::PtxtVec& witness, PedersenContext* ped)
-{
-    auto comG = coms[0] + padComs[0];
-    auto randG= rnds[0] + padRnds[0];
-    auto comH = coms[1] + padComs[1];
-    auto randH= rnds[1] + padRnds[1];
-
-    std::vector<CRV25519::Scalar> w;
-    std::vector<CRV25519::Point> gs;
-    std::vector<CRV25519::Point> hs;
-    for (auto i: c.indexes) {
-        gs.push_back(ped->getG(i));
-        hs.push_back(ped->getH(i));
-        w.push_back(witness[i]);
-    }
-    if (!DLPROOFS::verifyCom(comG, gs.data(), w.data(), gs.size(), randG))
-        return false;
-    return DLPROOFS::verifyCom(comH, hs.data(), w.data(), hs.size(), randH);
-}
-static bool checkLinConstrain(DLPROOFS::LinConstraint& c,
-    const std::vector<Point>& coms, const std::vector<CRV25519::Scalar>& rnds,
-    DLPROOFS::PtxtVec& witness, PedersenContext* ped)
-{
-    Point C = std::accumulate(coms.begin(), coms.end(), Point::identity());
-    CRV25519::Scalar r = std::accumulate(rnds.begin(), rnds.end(), CRV25519::Scalar());
-    std::vector<CRV25519::Scalar> w;
-    std::vector<CRV25519::Point> gs;
-    for (auto& it: c.terms) {
-        gs.push_back(ped->getG(it.first));
-        w.push_back(witness[it.first]);
-    }
-    return DLPROOFS::verifyCom(C, gs.data(), w.data(), gs.size(), r);
-}
 
 bool test_proofs() {
     GlobalKey gpk("testContext", /*k*/7, /*m*/6, /*n*/5);
@@ -350,7 +315,7 @@ bool test_proofs() {
         decRand.push_back(pd.decErrRnd[i][0]);
     }
     for (int i=0; i<scalarsPerElement(); i++) {
-        if (!checkLinConstrain(vd.decLinCnstr[i], decCommits, decRand, witness, vd.ped))
+        if (!checkLinCommit(vd.decLinCnstr[i].terms, decCommits, decRand, witness, vd.ped))
             return false;
     }}
 
@@ -358,7 +323,7 @@ bool test_proofs() {
     {std::vector<Point> encCommits = {vd.pt2Com, vd.rCom[0], vd.encErrCom[0]};
     std::vector<CRV25519::Scalar> encRand = {pd.pt2Rnd, pd.rRnd[0], pd.encErrRnd[0]};
     for (int i=0; i<scalarsPerElement(); i++) {
-        if (!checkLinConstrain(vd.encLinCnstr[i], encCommits, encRand, witness, vd.ped))
+        if (!checkLinCommit(vd.encLinCnstr[i].terms, encCommits, encRand, witness, vd.ped))
             return false;
     }}
 
@@ -366,7 +331,7 @@ bool test_proofs() {
     {std::vector<Point> kgCommits = {vd.sk2Com[0], vd.kGenErrCom[0]};
     std::vector<CRV25519::Scalar> kgRand = {pd.sk2Rnd[0], pd.kGenErrRnd[0]};
     for (int i=0; i<scalarsPerElement(); i++) {
-        if (!checkLinConstrain(vd.kGenLinCnstr[i], kgCommits, kgRand, witness, vd.ped))
+        if (!checkLinCommit(vd.kGenLinCnstr[i].terms, kgCommits, kgRand, witness, vd.ped))
             return false;
     }}
 
@@ -374,7 +339,7 @@ bool test_proofs() {
     {std::vector<Point> reshrCommits = {vd.pt1Com, vd.pt2Com};
     std::vector<CRV25519::Scalar> reshrRand = {pd.pt1Rnd, pd.pt2Rnd};
     for (int i=0; i < vd.gk->enn -vd.gk->tee +1; i++) {
-        if (!checkLinConstrain(vd.reShrLinCnstr[i],
+        if (!checkLinCommit(vd.reShrLinCnstr[i].terms,
                                reshrCommits, reshrRand, witness, vd.ped))
             return false;
     }}
@@ -397,9 +362,12 @@ bool test_proofs() {
     smlCommits.push_back(vd.yCom);
     smlRand.push_back(pd.yRnd);
     for (int i=0; i<scalarsPerElement(); i++) {
-        if (!checkLinConstrain(vd.smlnsLinCnstr[i], smlCommits, smlRand, witness, vd.ped))
+        if (!checkLinCommit(vd.smlnsLinCnstr[i].terms, smlCommits, smlRand, witness, vd.ped))
             return false;
     }}
+
+    ReadyToProve rtp;
+    rtp.aggregateProver(pd);
     return true;
 }
 

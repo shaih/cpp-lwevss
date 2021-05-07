@@ -22,6 +22,7 @@
  * OTHER DEALINGS IN THE SOFTWARE.
  **/
 #include <cassert>
+#include <numeric>
 #include "regevProofs.hpp"
 
 using namespace ALGEBRA;
@@ -106,9 +107,8 @@ void VerifierData::setIndexes() {
     pt2Len = gk->enn;
     decErrPadLen = PAD_SIZE * nDecSubvectors;
 
-    // The indexes, in order: sk1,sk2,decErr,r,encErr,kGenErr,pt1,pt2,y
-    sk1Idx = 0;
-    sk2Idx       = sk1Idx + skLen;
+    // The indexes, in order: sk2,decErr,r,encErr,kGenErr,sk1,pt1,pt2,y
+    sk2Idx       = 0;
     sk2PadIdx    = sk2Idx + skLen;
     decErrIdx    = sk2PadIdx + PAD_SIZE;
     decErrPadIdx = decErrIdx + decErrLen;
@@ -118,9 +118,11 @@ void VerifierData::setIndexes() {
     encErrPadIdx = encErrIdx + encErrLen;
     kGenErrIdx   = encErrPadIdx + PAD_SIZE;
     kGenErrPadIdx= kGenErrIdx + kGenErrLen;
-    pt1Idx       = kGenErrPadIdx + PAD_SIZE;
+    sk1Idx       = kGenErrPadIdx + PAD_SIZE;
+    pt1Idx       = sk1Idx + skLen;
     pt2Idx       = pt1Idx + pt1Len;
     yIdx         = pt2Idx + pt2Len;
+    wIdx         = yIdx + LINYDIM;
 }
 
 // Allocate G,H generators
@@ -129,13 +131,13 @@ void VerifierData::computeGenerators() {
     // makes the linear and quadratic lists disjoint, which adds another
     // variable. The indexing assumes that pt1,pt2,y are at the end after
     // all the others.
-    int gLen = yIdx+LINYDIM+1; 
+    int gLen = wIdx+1; 
     int hLen = pt1Idx+1;
     Gs.resize(gLen);
     Hs.resize(hLen);
     for (int i=0; i<gLen; i++)
         Gs[i] = ped->getG(i);
-    for (int i=0; i<hLen; i++)
+    for (int i=0; i<hLen-1; i++)
         Hs[i] = ped->getH(i);
     Hs[hLen-1] = ped->getH(gLen-1); // the last H generator has different index
 }
@@ -309,6 +311,13 @@ void powerVector(EVector& vec, const Element& x, int len) {
     for (int i=1; i<vec.length(); i++)
         vec[i] = vec[i-1] * x;
 }
+void powerVector(std::vector<CRV25519::Scalar>& vec, const CRV25519::Scalar& x, int len)
+{
+    vec.resize(len);
+    vec[0].setInteger(1);
+    for (int i=1; i<len; i++)
+        vec[i] = vec[i-1] * x;
+}
 
 void addToWitness(DLPROOFS::PtxtVec& witness, int idx, const SVector& v)
 {
@@ -321,13 +330,10 @@ void addToWitness(DLPROOFS::PtxtVec& witness, int idx, const EVector& v)
 }
 
 // Collect all the secret cariables in a DLPROOFS::PtxtVec map
-void ProverData::assembleFullWitness(DLPROOFS::PtxtVec& witness) {
-    if (pt1) addToWitness(witness, vd->pt1Idx, *pt1);
-    if (sk1) addToWitness(witness, vd->sk1Idx, *sk1);
+void ProverData::assembleNormWitness(DLPROOFS::PtxtVec& witness) {
     if (decErr) addToWitness(witness, vd->decErrIdx, *decErr);
     addToWitness(witness, vd->decErrPadIdx, decErrPadding);
 
-    if (pt2) addToWitness(witness, vd->pt2Idx, *pt2);
     if (r) addToWitness(witness, vd->rIdx, *r);
     addToWitness(witness, vd->rPadIdx, rPadding);
     addToWitness(witness, vd->encErrIdx, encErr);
@@ -337,8 +343,54 @@ void ProverData::assembleFullWitness(DLPROOFS::PtxtVec& witness) {
     addToWitness(witness, vd->sk2PadIdx, sk2Padding);
     addToWitness(witness, vd->kGenErrIdx, kGenErr);
     addToWitness(witness, vd->kGenErrPadIdx, kGenErrPadding);
+}
 
+// Collect all the secret cariables in a DLPROOFS::PtxtVec map
+void ProverData::assembleLinearWitness(DLPROOFS::PtxtVec& witness) {
+    if (sk1) addToWitness(witness, vd->sk1Idx, *sk1);
+    if (pt1) addToWitness(witness, vd->pt1Idx, *pt1);
+    if (pt2) addToWitness(witness, vd->pt2Idx, *pt2);
     addToWitness(witness, vd->yIdx, y);
+}
+
+
+
+// debugging tools
+
+bool checkQuadConstrain(DLPROOFS::QuadConstraint& c,
+    const TwoPoints& coms, const TwoPoints& padComs, const TwoScalars& rnds,
+    const TwoScalars& padRnds, DLPROOFS::PtxtVec& witness, PedersenContext* ped)
+{
+    auto comG = coms[0] + padComs[0];
+    auto randG= rnds[0] + padRnds[0];
+    auto comH = coms[1] + padComs[1];
+    auto randH= rnds[1] + padRnds[1];
+
+    std::vector<CRV25519::Scalar> w;
+    std::vector<CRV25519::Point> gs;
+    std::vector<CRV25519::Point> hs;
+    for (auto i: c.indexes) {
+        gs.push_back(ped->getG(i));
+        hs.push_back(ped->getH(i));
+        w.push_back(witness[i]);
+    }
+    if (!DLPROOFS::verifyCom(comG, gs.data(), w.data(), gs.size(), randG))
+        return false;
+    return DLPROOFS::verifyCom(comH, hs.data(), w.data(), hs.size(), randH);
+}
+bool checkLinCommit(DLPROOFS::PtxtVec& pv,
+    const std::vector<Point>& coms, const std::vector<CRV25519::Scalar>& rnds,
+    DLPROOFS::PtxtVec& witness, PedersenContext* ped)
+{
+    Point C = std::accumulate(coms.begin(), coms.end(), Point::identity());
+    CRV25519::Scalar r = std::accumulate(rnds.begin(), rnds.end(), CRV25519::Scalar());
+    std::vector<CRV25519::Scalar> w;
+    std::vector<CRV25519::Point> gs;
+    for (auto& it: pv) {
+        gs.push_back(ped->getG(it.first));
+        w.push_back(witness[it.first]);
+    }
+    return DLPROOFS::verifyCom(C, gs.data(), w.data(), gs.size(), r);
 }
 
 } // end of namespace REGEVENC

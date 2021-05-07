@@ -186,7 +186,7 @@ void proveEncryption(ProverData& pd, const ALGEBRA::SVector& ptxt,
     pd.r   = (ALGEBRA::EVector*) &rnd;
 
     // commitment to encrypted plaintext
-    vd.pt2Com = commit(ptxt, vd.pt2Idx, vd.Gs, pd.pt2Rnd);
+    vd.pt2Com = commit(*pd.pt2, vd.pt2Idx, vd.Gs, pd.pt2Rnd);
     vd.mer->processPoint("RegevEncPtxt", vd.pt2Com);
     
     // pad the randomness with four scalars to get l2 norm=B_encRnd
@@ -633,6 +633,7 @@ void proveSmallness(ProverData& pd) {
     }
 
     // A challenge scalar x, defines the vector xvec=(1,x,x^2,...)
+    vd.mer->processVector(vd.z, (unsigned char*)"masked reply", 12);
     Element x = vd.mer->newElement("SmallnessChallenge");
     EVector xvec;
     powerVector(xvec, x, pd.y.length()); // the vector xvec=(1,x,x^2,...)
@@ -669,5 +670,351 @@ void proveSmallness(ProverData& pd) {
     }
 #endif
 }
+
+#ifndef DEBUGGING // normal operation
+void ReadyToVerify::aggregateVerifier1(VerifierData& vd) {
+#else // debugging
+void ReadyToProve::aggregateVerifier1(ProverData& pd) {
+    VerifierData& vd = *pd.vd;
+    DLPROOFS::PtxtVec allWitness = quadWitnessG;
+    allWitness.insert(linWitness.begin(), linWitness.end());
+#endif
+    // Step 1: aggregate linear constraints, no change in the commitments
+    CRV25519::Scalar r = vd.mer->newChallenge("aggregateLinear");
+    powerVector(rVec, r, vd.linConstr.size()); // vector (1,r,r^2,...)
+    linCnstr.merge(vd.linConstr, rVec);
+
+#ifdef DEBUGGING // check that the merged constraint is satisfied
+    assert(checkConstraintLoose(linCnstr, allWitness));
+#endif
+
+    // Step 2: aggregate the quadratic constraints. This step also
+    // modifies the linear constraint and the commitments
+
+    // 2a. merge the quadratic constraints, a side effect of this is changing
+    // the witness, multiplying the witness vector for contrs[i] by coeffs[i]
+    r = vd.mer->newChallenge("aggregateNorms");
+    powerVector(rVec, r, vd.normConstr.size()); // vector (1,r,r^2,...)
+    quadCnstr.merge(vd.normConstr, rVec);
+
+#ifdef DEBUGGING // check that the quadratic constraint is satisfied
+    for (int i=0; i<vd.nDecSubvectors; i++) {
+        auto& c = vd.normConstr[i];// norm constraint for decryption subvector
+        auto& factor = rVec[i];
+        for (auto& idx: c.indexes) allWitness[idx] *= factor;
+    }
+    for (auto& idx: vd.rQuadCnstr->indexes) // encryption randomness
+        allWitness[idx] *= rVec[vd.nDecSubvectors];
+    for (auto& idx: vd.encErrQuadCnstr->indexes) // encryption noise
+        allWitness[idx] *= rVec[vd.nDecSubvectors+1];
+    for (auto& idx: vd.skQuadCnstr->indexes) // secret key
+        allWitness[idx] *= rVec[vd.nDecSubvectors+2];
+    for (auto& idx: vd.kgErrQuadCnstr->indexes) // key-generation noise
+        allWitness[idx] *= rVec[vd.nDecSubvectors+3];
+    assert(checkConstraintLoose(quadCnstr, allWitness, allWitness));
+#endif
+
+    // 2b. Adjust the linear constraints to compensate for the chnage to
+    // the witness: when changing w->w*f we change the corresponding linear
+    // coefficient from a to a/f.
+    for (int i=0; i<rVec.size(); i++) {
+        DLPROOFS::QuadConstraint& cnstr = vd.normConstr[i];
+        for (int idx: cnstr.indexes)
+            linCnstr.terms[idx] /= rVec[i];
+    }
+#ifdef DEBUGGING // check that the linear constraint is satisfied again
+    assert(checkConstraintLoose(linCnstr, allWitness));
+#endif
+
+    // Split the linear contraints terms to ones that also appear in
+    // the quadratic (as) vs ones that ony apppear in linear (bs)
+    int wIdx=DLPROOFS::splitPtxtVec(as, bs, linCnstr.terms, quadCnstr.indexes);
+    assert(wIdx == vd.wIdx);
+#if 0 // ifdef DEBUGGING
+    std::cout << "b={";
+    for (auto& b: bs) {
+        std::cout << b.first<<" ";
+    }
+    int skLen = vd.gk->kay * vd.gk->ell;
+    int pt1Len = vd.gk->tee;
+    int pt2Len = vd.gk->enn;
+    std::cout << "}\nsk1Idx="<<vd.sk1Idx<<"..."<<(vd.sk1Idx+skLen-1)
+        <<", pt1Idx="<<vd.pt1Idx<<"..."<<(vd.pt1Idx+pt1Len-1)
+        <<", pt2Idx="<<vd.pt2Idx<<"..."<<(vd.pt2Idx+pt2Len-1)
+        <<", yIdx="<<vd.yIdx<<"..."<<(vd.yIdx+LINYDIM-1) << std::endl;
+#endif
+
+    // 2c. Modify the commitments to reflect the change in witness
+    for (int i=0; i<vd.nDecSubvectors; i++) {
+        vd.decErrCom[i] *= rVec[i];
+        vd.decErrPadCom[i] *= rVec[i];
+    }
+    vd.rCom *= rVec[vd.nDecSubvectors];
+    vd.rPadCom *= rVec[vd.nDecSubvectors];
+    vd.encErrCom *= rVec[vd.nDecSubvectors+1];
+    vd.encErrPadCom *= rVec[vd.nDecSubvectors+1];
+    vd.sk2Com *= rVec[vd.nDecSubvectors+2];
+    vd.sk2PadCom *= rVec[vd.nDecSubvectors+2];
+    vd.kGenErrCom *= rVec[vd.nDecSubvectors+3];
+    vd.kGenErrPadCom *= rVec[vd.nDecSubvectors+3];
+
+    // Step 3. Aggregate the commitments
+    linCom = vd.sk1Com +vd.pt1Com +vd.pt2Com +vd.yCom;
+
+    quadCom = vd.rCom[0] +vd.rCom[1] +vd.encErrCom[0] +vd.encErrCom[1]
+     +vd.sk2Com[0] +vd.sk2Com[1] +vd.kGenErrCom[0] +vd.kGenErrCom[1]
+     +vd.rPadCom[0] +vd.rPadCom[1] +vd.encErrPadCom[0] +vd.encErrPadCom[1]
+     +vd.sk2PadCom[0] +vd.sk2PadCom[1] +vd.kGenErrPadCom[0] +vd.kGenErrPadCom[1];
+    for (int i=0; i<vd.nDecSubvectors; i++) {
+        quadCom += vd.decErrCom[i][0] + vd.decErrCom[i][1]
+                        + vd.decErrPadCom[i][0] + vd.decErrPadCom[i][1];
+    }
+}
+void ReadyToProve::aggregateProver(ProverData& pd)
+{
+    // Collect all the secret variables
+    pd.assembleNormWitness(quadWitnessG); // all but sk1,pt1,pt2,y
+    pd.assembleLinearWitness(linWitness);// only sk1,pt1,pt2,y
+
+    // Reduce to a single quadratic and a single linear constraint
+    VerifierData& vd = *pd.vd;
+#ifndef DEBUGGING // normal operation
+    aggregateVerifier1(vd);
+#else
+    aggregateVerifier1(pd);
+#endif
+
+    // The aggregate function implies modifying the secret variables
+    // in the quadratic equations, and hence also the commitments and
+    // their corresponding randomness
+
+    for (int i=0; i<vd.nDecSubvectors; i++) {
+        auto& c = vd.normConstr[i];// norm constraint for decryption subvector
+        auto& factor = rVec[i];
+        for (auto& idx: c.indexes) quadWitnessG[idx] *= factor;
+        pd.decErrRnd[i] *= factor;
+        pd.decErrPadRnd[i] *= factor;
+    }
+
+    for (auto& idx: vd.rQuadCnstr->indexes) // encryption randomness
+        quadWitnessG[idx] *= rVec[vd.nDecSubvectors];
+    pd.rRnd *= rVec[vd.nDecSubvectors];
+    pd.rPadRnd *= rVec[vd.nDecSubvectors];
+
+    for (auto& idx: vd.encErrQuadCnstr->indexes) // encryption noise
+        quadWitnessG[idx] *= rVec[vd.nDecSubvectors+1];
+    pd.encErrRnd *= rVec[vd.nDecSubvectors+1];
+    pd.encErrPadRnd *= rVec[vd.nDecSubvectors+1];
+
+    for (auto& idx: vd.skQuadCnstr->indexes) // secret key
+        quadWitnessG[idx] *= rVec[vd.nDecSubvectors+2];
+    pd.sk2Rnd *= rVec[vd.nDecSubvectors+2];
+    pd.sk2PadRnd *= rVec[vd.nDecSubvectors+2];
+
+    for (auto& idx: vd.kgErrQuadCnstr->indexes) // key-generation noise
+        quadWitnessG[idx] *= rVec[vd.nDecSubvectors+3];
+    pd.kGenErrRnd *= rVec[vd.nDecSubvectors+3];
+    pd.kGenErrPadRnd *= rVec[vd.nDecSubvectors+3];
+
+    // reset from original constraints
+     {DLPROOFS::LinConstraint emptyLin;
+     DLPROOFS::QuadConstraint emptyQuad;
+    for (auto& lc : vd.linConstr) lc = emptyLin;
+    for (auto& qc : pd.vd->normConstr) qc = emptyQuad;}
+
+    // Aggregate the commitment randomness for linear-only variables
+    lComRnd = pd.sk1Rnd +pd.pt1Rnd +pd.pt2Rnd +pd.yRnd;
+#ifdef DEBUGGING
+    assert(checkConstraintLoose(quadCnstr, quadWitnessG, quadWitnessG));
+    {std::vector<CRV25519::Scalar> linWt;
+    std::vector<CRV25519::Point> linGs;
+    for (auto& b: bs) { 
+        linWt.push_back(linWitness[b.first]);
+        linGs.push_back(vd.Gs[b.first]);
+    }
+    assert(DLPROOFS::verifyCom(linCom, linGs.data(), linWt.data(), linGs.size(),lComRnd));
+    }
+#endif
+
+    // Aggregate commitment randomness for the quadratic variables
+    qComRnd = pd.rRnd[0] +pd.rRnd[1] +pd.encErrRnd[0] +pd.encErrRnd[1]
+     +pd.sk2Rnd[0] +pd.sk2Rnd[1] +pd.kGenErrRnd[0] +pd.kGenErrRnd[1]
+     +pd.rPadRnd[0] +pd.rPadRnd[1] +pd.encErrPadRnd[0] +pd.encErrPadRnd[1]
+     +pd.sk2PadRnd[0] +pd.sk2PadRnd[1] +pd.kGenErrPadRnd[0] +pd.kGenErrPadRnd[1];
+    for (int i=0; i<vd.nDecSubvectors; i++) {
+        qComRnd += pd.decErrRnd[i][0] + pd.decErrRnd[i][1]
+                        + pd.decErrPadRnd[i][0] + pd.decErrPadRnd[i][1];
+    }
+#ifdef DEBUGGING
+    {std::vector<CRV25519::Scalar> wt;
+    std::vector<Point> gs, hs;
+    for (auto i: quadCnstr.indexes) {
+        gs.push_back(vd.Gs[i]);
+        hs.push_back(vd.Hs[i]);
+        wt.push_back(quadWitnessG[i]);
+    }
+    assert(DLPROOFS::verifyCom2(quadCom, gs.data(), wt.data(),
+                                hs.data(), wt.data(), gs.size(), qComRnd));
+    }
+#endif
+
+    // Compute and commit to the outcome of the linear-only constraint
+    linWitness[vd.wIdx] = quadWitnessG[vd.wIdx]
+                        = DLPROOFS::innerProduct(bs, linWitness);
+    const CRV25519::Scalar& w = quadWitnessG[vd.wIdx];
+    pd.wRnd = CRV25519::randomScalar();
+    assert(vd.wIdx == vd.Gs.size()-1);
+    Point& wG = vd.Gs[vd.wIdx];
+    vd.wCom = Point::base()*pd.wRnd + wG*w;
+    bs[vd.wIdx].setInteger(-1); // add the term wIdx -> -1
+
+    // Add commitment to w to both linCom and quadCom
+    linCom += vd.wCom;
+    lComRnd += pd.wRnd;
+    quadCom += vd.wCom;
+    qComRnd += pd.wRnd;
+#ifdef DEBUGGING
+    // check the commitments again
+    {std::vector<CRV25519::Scalar> linWt;
+    std::vector<CRV25519::Point> linGs;
+    for (auto& b: bs) { 
+        linWt.push_back(linWitness[b.first]);
+        linGs.push_back(vd.Gs[b.first]);
+    }
+    assert(DLPROOFS::verifyCom(linCom, linGs.data(), linWt.data(), linGs.size(),lComRnd));
+    }
+    {std::vector<CRV25519::Scalar> wtG;
+    std::vector<Point> gs, hs;
+    for (auto i: quadCnstr.indexes) {
+        gs.push_back(vd.Gs[i]);
+        hs.push_back(vd.Hs[i]);
+        wtG.push_back(quadWitnessG[i]);
+    }
+    std::vector<CRV25519::Scalar> wtH = wtG;
+    wtG.push_back(quadWitnessG[vd.wIdx]);
+    wtH.push_back(CRV25519::Scalar()); // add zero
+    gs.push_back(vd.Gs[vd.wIdx]);
+    hs.push_back(vd.Hs[vd.Hs.size()-1]);
+    assert(DLPROOFS::verifyCom2(quadCom, gs.data(), wtG.data(),
+                                hs.data(), wtH.data(), gs.size(), qComRnd));
+    }
+#endif
+
+    // enforce norm constraint and separate linear and quadratic variables
+#ifndef DEBUGGING // normal operation
+    aggregateVerifier2(vd);
+#else
+    aggregateVerifier2(pd);
+#endif
+    // release memory of intermediate vectors
+    rVec.clear(); uVec.clear(); as.clear(); bs.clear();
+
+    // add the offsets deltaG, deltaH into quadWitnessG, quadWitnessH
+    quadWitnessH = quadWitnessG;           // so far we only used quadWitnessG
+    quadWitnessH[vd.wIdx] = CRV25519::Scalar(); // quadWitnessH doesn't have w
+    auto itWG = quadWitnessG.begin();
+    auto itDG = deltaG.begin();
+    while (itWG != quadWitnessG.end() && itDG != deltaG.end()) {
+        assert(itWG->first == itDG->first);
+        itWG->second -= itDG->second;
+        itWG++; itDG++;
+    }
+    assert(itWG == quadWitnessG.end() && itDG == deltaG.end());
+
+    auto itWH = quadWitnessH.begin();
+    auto itDH = deltaH.begin();
+    while (itWH != quadWitnessH.end() && itDH != deltaH.end()) {
+        assert(itWH->first == itDH->first);
+        itWH->second -= itDH->second;
+        itWH++; itDH++;
+    }
+    assert(itWH == quadWitnessH.end() && itDH == deltaH.end());
+#ifdef DEBUGGING
+    assert(checkConstraint(quadCnstr, quadWitnessG, quadWitnessH));
+    assert(checkConstraint(linCnstr, linWitness));
+#endif
+}
+
+#ifndef DEBUGGING // normal operation
+void ReadyToVerify::aggregateVerifier2(VerifierData& vd) {
+#else // debugging
+void ReadyToProve::aggregateVerifier2(ProverData& pd) {
+    VerifierData& vd = *pd.vd;
+#endif
+    // Step 4: enforce norm constraint and separate linear from quadratic
+    // variables. At this point we have only two constraints:
+    //    Linear:   <as,xs> + <bs,ys> = A (bs without the last term for w)
+    //    Quadratic <xs,xs> = B
+
+    // 4a. Modify the quadratic constraint to enforce norm constraint,
+    // namely change the constraint to <xs-us,xs+us> = B-|us|^2, where
+    // the us are a random challemge sent by the verifier. That is, each
+    // witness variable xs[i] is replaced by xs[i]+us[i] for the Gs and
+    // by xs[i]-us[i] for the Hs, hence the product changes from xs[i]^2
+    // to xs[i]^2 - us[i]^2.
+    CRV25519::Scalar u = vd.mer->newChallenge("enforceNorm");
+    powerVector(uVec, u, quadCnstr.indexes.size()); // vector (1,r,r^2,...)
+    assert(uVec.size()==as.size());
+    quadCnstr.equalsTo -= innerProduct(uVec.data(),uVec.data(),uVec.size());
+#ifdef DEBUGGING
+    DLPROOFS::PtxtVec qWitG = quadWitnessG; // the witness, including w
+    DLPROOFS::PtxtVec qWitH = quadWitnessG;
+    int idxx = 0;
+    for (auto& x: qWitG) if (idxx<uVec.size()) x.second += uVec[idxx++];
+    idxx = 0;
+    for (auto& x: qWitH) if (idxx<uVec.size()) x.second -= uVec[idxx++];
+    assert(checkConstraintLoose(quadCnstr, qWitG, qWitH));
+        // NOTE: quadCnstr.indexes does not contain wIdx yet
+#endif
+    // 4b. Separate the linear and quadratic constraint variables: The
+    // linear constraint will become <(bs|-1), ys|w> = 0, so it have only
+    // the variables in bs, plus the new variable w, and equalsTo = 0.
+    // The quadratic constaints will include the old linear constraint
+    // times a random challenge rho, so it will become
+    //     <(xs+us+rho*as|w),(xs-us|rho)> = B-|us|^2+rho(A-<as,us>)
+    // Hence the indexes will include also the index of w, and we will
+    // set equalsTo = B-|us|^2+rho(A-<as,us>). We also incorporate w
+    // in the commitments, namely C' = C + w*G_w.
+    CRV25519::Scalar& A = linCnstr.equalsTo;
+    CRV25519::Scalar rho = vd.mer->newChallenge("separareLinQuad");
+    quadCnstr.indexes.insert(quadCnstr.indexes.end(), vd.wIdx);
+    int idx = 0;
+    for (auto& aPair: as) { // set A -= <as,us>
+        assert(idx<uVec.size());
+        A -= aPair.second * uVec[idx++];
+    }
+    quadCnstr.equalsTo += rho*A;
+#ifdef DEBUGGING
+    for (auto& x: qWitG) if (x.first!=vd.wIdx) x.second += rho*as[x.first];
+    qWitH[vd.wIdx] = rho;
+    assert(checkConstraintLoose(quadCnstr, qWitG, qWitH));
+#endif
+    linCnstr.terms = bs;             // including the term wIdx -> -1
+    linCnstr.equalsTo = CRV25519::Scalar(); // set to equalsTo = zero
+#ifdef DEBUGGING
+    assert(checkConstraintLoose(linCnstr, linWitness));
+#endif
+    // 4c. Finally, we avoid changing the commitments to the witness in
+    // the quadratic proof by giving the verifier the offset vectors
+    // deltaG, deltaH, such that
+    // (1) the quadratic commitment is C=r*F+<x',Gs>+<y',Hs> for some x',y'
+    // (2) these x',y' satisfy <x'-deltaG, y'-deltaH> = equalsTo
+    // In our case we have deltaG = (-us-rho*as|0) and deltaH=(us|-rho).
+    idx = 0;
+    deltaG.clear();
+    deltaH.clear();
+    rho.negate(); // -rho
+    for (auto& aPair : as) {
+        aPair.second *= rho;
+        aPair.second -= uVec[idx];
+        deltaG.insert(deltaG.end(), aPair);
+        deltaH.insert(deltaH.end(), std::make_pair(aPair.first,uVec[idx]));
+        idx++;
+    }
+    deltaG[vd.wIdx] = CRV25519::Scalar();
+    deltaH[vd.wIdx] = rho;
+}
+
+
 
 } // end of namespace REGEVENC

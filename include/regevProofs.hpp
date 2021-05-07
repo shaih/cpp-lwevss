@@ -46,6 +46,27 @@ using CRV25519::Point, DLPROOFS::PedersenContext, TOOLS::SharingParams,
 typedef std::array<Point,2> TwoPoints;
 typedef std::array<CRV25519::Scalar,2> TwoScalars;
 
+inline TwoPoints& operator*=(TwoPoints& tp, const CRV25519::Scalar& s) {
+    tp[0] *= s;
+    tp[1] *= s;
+    return tp;
+}
+inline TwoPoints& operator*=(TwoPoints& tp, const TwoScalars& ts) {
+    tp[0] *= ts[0];
+    tp[1] *= ts[1];
+    return tp;
+}
+inline TwoScalars& operator*=(TwoScalars& ts, const CRV25519::Scalar& s) {
+    ts[0] *= s;
+    ts[1] *= s;
+    return ts;
+}
+inline TwoScalars& operator*=(TwoScalars& ts1, const TwoScalars& ts2) {
+    ts1[0] *= ts2[0];
+    ts1[1] *= ts2[1];
+    return ts1;
+}
+
 #define DEBUGGING
 
 inline constexpr int PAD_SIZE=4; // add 4 scalars to pad to a specific sum-of-squares
@@ -190,7 +211,7 @@ struct VerifierData {
     int pt1Idx, sk1Idx, decErrIdx, decErrPadIdx,        // decryption
         pt2Idx, rIdx, rPadIdx, encErrIdx, encErrPadIdx, // encryption
         sk2Idx, sk2PadIdx, kGenErrIdx, kGenErrPadIdx,   // key generation
-        yIdx;                                          // smallness proof
+        yIdx, wIdx;                    // smallness proof and aggregation
 
     // Commitments to different variables. The quadratic equations require
     // two commitment per variable, one with G generators and the other
@@ -205,7 +226,7 @@ struct VerifierData {
     TwoPoints rCom, rPadCom, encErrCom, encErrPadCom,
             sk2Com, sk2PadCom, kGenErrCom, kGenErrPadCom;
 
-    Point sk1Com, pt1Com, pt2Com, yCom;
+    Point sk1Com, pt1Com, pt2Com, yCom, wCom;
 
     std::vector<DLPROOFS::LinConstraint> linConstr;
     std::vector<DLPROOFS::QuadConstraint> normConstr;
@@ -231,7 +252,7 @@ struct VerifierData {
         decErrPadCom.assign(decErrPadCom.size(), empty2points);
         rCom =rPadCom =encErrCom =encErrPadCom =sk2Com =sk2PadCom
             =kGenErrCom =kGenErrPadCom =empty2points;
-        pt1Com = pt2Com = yCom = Point::identity();
+        pt1Com = pt2Com = yCom = wCom = Point::identity();
 
         // empty the constraints w/o invalidating the pointers to them
         DLPROOFS::LinConstraint emptyLin;
@@ -257,7 +278,7 @@ struct ProverData {
     std::vector<TwoScalars> decErrRnd, decErrPadRnd;
     TwoScalars rRnd, rPadRnd, encErrRnd, encErrPadRnd,
                 sk2Rnd, sk2PadRnd, kGenErrRnd, kGenErrPadRnd;
-    CRV25519::Scalar sk1Rnd, pt1Rnd, pt2Rnd, yRnd;
+    CRV25519::Scalar sk1Rnd, pt1Rnd, pt2Rnd, yRnd, wRnd;
 
     // committed values: all except pt1, pt2, y consist of the original
     // vector, and padding to make them of a certain public size. For
@@ -270,8 +291,17 @@ struct ProverData {
     ALGEBRA::EVector decErrPadding, rPadding, 
         encErr, encErrPadding, sk2Padding, kGenErr, kGenErrPadding, y;
 
-    // Collect all the secret variables in a DLPROOFS::PtxtVec map
-    void assembleFullWitness(DLPROOFS::PtxtVec& witness);
+    // Collect the secret variables in a DLPROOFS::PtxtVec map
+
+    // Collect the secret variables that only appear in linear proofs (sk1,pt1,pt2,y)
+    void assembleLinearWitness(DLPROOFS::PtxtVec& witness);
+    // Collect the secret variables that also appear in norm proofs (eberything else)
+    void assembleNormWitness(DLPROOFS::PtxtVec& witness);
+
+    void assembleFullWitness(DLPROOFS::PtxtVec& witness) { // all of them
+        assembleNormWitness(witness);
+        assembleLinearWitness(witness);
+    }
 
     // Reset when preparing for a new proof at the prover's site
     void prepareForNextProof() {
@@ -285,7 +315,7 @@ struct ProverData {
         decErrPadRnd.assign(vd->nDecSubvectors, empty2scalars);
         rRnd =rPadRnd =encErrRnd =encErrPadRnd =sk2Rnd
             =sk2PadRnd =kGenErrRnd =kGenErrPadRnd =empty2scalars;
-        pt1Rnd =pt2Rnd =yRnd = CRV25519::Scalar();
+        pt1Rnd =pt2Rnd =yRnd =wRnd = CRV25519::Scalar();
 
         decErr = r = sk2 = nullptr;
         pt1 = pt2 = nullptr;
@@ -346,10 +376,32 @@ void proveSmallness(ProverData& pd);
 
 void verifySmallness(VerifierData& vd);
 
+struct ReadyToVerify {
+    DLPROOFS::LinConstraint linCnstr;
+    Point linCom;
+    DLPROOFS::QuadConstraint quadCnstr;
+    Point quadCom;
 
+    // The offset used for the G, H witnesses in the quadratic proof
+    DLPROOFS::PtxtVec deltaG, deltaH;
 
+    std::vector<CRV25519::Scalar> rVec, uVec;
+    DLPROOFS::PtxtVec as, bs;
+#ifndef DEBUGGING // these will be used in the normal settings
+    void aggregateVerifier1(VerifierData& vd);
+    void aggregateVerifier2(VerifierData& vd);
+#endif
+};
+struct ReadyToProve : public ReadyToVerify {
+    CRV25519::Scalar lComRnd, qComRnd;
+    DLPROOFS::PtxtVec linWitness, quadWitnessG, quadWitnessH;
 
-
+    void aggregateProver(ProverData& pd);
+#ifdef DEBUGGING // these include debugging code that needs some of the prover state
+    void aggregateVerifier1(ProverData& pd);
+    void aggregateVerifier2(ProverData& pd);
+#endif
+};
 
 
 /****** utility functions *******/
@@ -362,6 +414,7 @@ void addToWitness(DLPROOFS::PtxtVec& witness, int idx, const ALGEBRA::EVector& v
 // compute the vector (1,x,x^2,...,x^{len-1})
 void powerVector(ALGEBRA::SVector& vec, const ALGEBRA::Scalar& x, int len);
 void powerVector(ALGEBRA::EVector& vec, const ALGEBRA::Element& x, int len);
+void powerVector(std::vector<CRV25519::Scalar>& vec, const CRV25519::Scalar& x, int len);
 
 // Commit to a slice of the vector
 Point commit(const ALGEBRA::SVector& v, size_t genIdx,
@@ -431,6 +484,12 @@ inline std::ostream& prettyPrint(std::ostream& st, const DLPROOFS::QuadConstrain
     return st;
 }
 
+bool checkQuadConstrain(DLPROOFS::QuadConstraint& c,
+    const TwoPoints& coms, const TwoPoints& padComs, const TwoScalars& rnds,
+    const TwoScalars& padRnds, DLPROOFS::PtxtVec& witness, PedersenContext* ped);
+bool checkLinCommit(DLPROOFS::PtxtVec& pv,
+    const std::vector<Point>& coms, const std::vector<CRV25519::Scalar>& rnds,
+    DLPROOFS::PtxtVec& witness, PedersenContext* ped);
 
 } // end of namespace REGEVENC
 #endif // ifndef _REGEVPROOFS_HPP_

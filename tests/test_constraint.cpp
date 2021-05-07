@@ -25,6 +25,25 @@ bool test_splitBy()
         return false;
     return (nextIdx == 11);
 }
+
+bool test_innerProduct() {
+    PtxtVec v1 = {
+        {1, Scalar().setInteger(2)},
+        {3, Scalar().setInteger(3)},
+        {4, Scalar().setInteger(5)},
+        {6, Scalar().setInteger(7)},
+        {8, Scalar().setInteger(11)}
+    };
+    PtxtVec v2 = {
+        {2, Scalar().setInteger(1)},
+        {3, Scalar().setInteger(2)},
+        {4, Scalar().setInteger(3)},
+        {8, Scalar().setInteger(4)},
+        {10, Scalar().setInteger(5)}
+    };
+    return ( innerProduct(v1,v2) == Scalar().setInteger(65) );
+}
+
 static bool test_Constraints()
 {
     // merge constraints
