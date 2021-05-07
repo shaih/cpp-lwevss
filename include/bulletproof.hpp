@@ -78,8 +78,8 @@ struct LinPfTranscript {
 // of points and scalars in the FlatLinStmt while processing the proof
 void proveLinear(LinPfTranscript& proof, Scalar r, MerlinBPctx& mer,
         Scalar* const as, Scalar* const bs, Point* const gs, size_t n);
-bool verifyLinear(LinPfTranscript& pf, FlatLinStmt& st,
-                  MerlinBPctx& m, Scalar* wOffsets=nullptr);
+bool verifyLinear(LinPfTranscript& proof, Scalar* const bs, Point* const gs,
+        size_t n, const Scalar&e, MerlinBPctx& mer, Scalar *wOffsets=nullptr);
     // If the optional wOffsets is specified, then proof.C is a
     // commitment to witness+wOffset rather than to the witness itself.
 
@@ -94,7 +94,8 @@ inline LinPfTranscript proveLinear(const std::string& tag,
  
     // Compute and push {"C": commitment to the xes}
     Scalar r = CRV25519::randomScalar();
-    proof.C = DLPROOFS::commit(st.generators.data(), st.witness.data(), st.generators.size(), r); // commitment to the xes=as
+    proof.C = DLPROOFS::commit(st.generators.data(), st.witness.data(),
+                        st.generators.size(), r); // commitment to the xes=as
 
     size_t n = st.generators.size();
     Scalar* const as = st.witness.data();   // these are the xes   
@@ -111,7 +112,11 @@ inline bool verifyLinear(const LinConstraint& cnstr, LinPfTranscript& proof) {
     mer.processConstraint("constraint", cnstr); 
 
     FlatLinStmt st(ped, cnstr);   // "Faltten" the statement
-    return verifyLinear(proof, st, mer);  // The actual verification
+    size_t n = st.generators.size();
+    Scalar* const bs = st.statement.data(); // these are the constraints
+    Point* const gs = st.generators.data(); // these are the generators
+    return verifyLinear(proof, bs, gs, n, st.equalsTo, mer); 
+                                            // The actual verification
 }
 
 // Quadratic proofs: quadratic constraints have the form
@@ -155,8 +160,9 @@ struct QuadPfTranscript {
 // of points and scalars in the FlatQuadStmt while processing the proof
 void proveQuadratic(QuadPfTranscript& pf, Scalar r, MerlinBPctx& m, 
                     Point* gs, Scalar* as, Point* hs, Scalar* bs, size_t n);
-bool verifyQuadratic(QuadPfTranscript& pf, FlatQuadStmt& st, MerlinBPctx& m,
-                     Scalar* uOffsets=nullptr, Scalar* vOffsets=nullptr);
+bool verifyQuadratic(QuadPfTranscript& pf, Point* const gs, Point* const hs,
+                    size_t n, const Scalar& eq, MerlinBPctx& mer,
+                    Scalar *uOffsets=nullptr, Scalar *vOffsets=nullptr);
     // If the optional uOffsets, vOffsets are specified, then proof.C is
     // a commitment to u+uOffset, v+vOffset rather than to u,v themselves.
 
@@ -187,7 +193,11 @@ inline bool verifyQuadratic(const QuadConstraint& cnstr, QuadPfTranscript& pf) {
     mer.processConstraint("constraint", cnstr);
     PedersenContext ped(pf.tag);
     FlatQuadStmt st(ped, cnstr);   // "Faltten" the statement
-    return verifyQuadratic(pf, st, mer);  // The actual verification
+    size_t n = st.gs.size();
+    Point* const gs = st.gs.data();  // the G generators
+    Point* const hs = st.hs.data();  // the H generators
+    return verifyQuadratic(pf, gs, hs, n, st.equalsTo, mer);
+                                    // The actual verification
 }
 
 // Norm proofs are similar to quadratic, but for the case of xs=ys. It gets

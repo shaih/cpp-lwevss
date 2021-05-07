@@ -186,19 +186,16 @@ void proveLinear(LinPfTranscript& proof, Scalar r, MerlinBPctx& mer,
 // points and scalars in the FlatLinStmt while generating the proof.
 // If the optional wOffsets is specified, then proof.C is a commitment
 // to witness+wOffset rather than to the witness itself.
-bool verifyLinear(LinPfTranscript& proof, FlatLinStmt& st, MerlinBPctx& mer,
-                  Scalar *wOffsets) {
-    size_t n = st.generators.size();
+bool verifyLinear(LinPfTranscript& proof, Scalar* const bs, Point* const gs,
+                  size_t n, const Scalar& eq, MerlinBPctx& mer, Scalar *wOffsets) {
     size_t original_n = n;
-    Scalar* const bs = st.statement.data(); // these are the constraints
-    Point* const gs = st.generators.data(); // these are the generators
 
     // Include the commitment to the witness
     mer.processPoint("C", proof.C);
 
     // Get the generator F
     Point F = mer.newGenerator("F");
-    Point C = proof.C + F*st.equalsTo;
+    Point C = proof.C + F*eq;
 
     size_t logN = log2roundUp(n);
     if (proof.Ls.size() != logN || proof.Rs.size() != logN) {
@@ -343,20 +340,17 @@ void proveQuadratic(QuadPfTranscript& pf, Scalar r, MerlinBPctx& mer,
 // the list of points in the FlatQuadStmt while verifying the proof
 // If the optional uOffsets, vOffsets are specified, then proof.C is
 // a commitment to u+uOffset, v+vOffset rather than to u,v themselves.
-bool verifyQuadratic(QuadPfTranscript& pf, FlatQuadStmt& st, MerlinBPctx& mer,
-                     Scalar *uOffsets, Scalar *vOffsets)
-{
-    size_t n = st.gs.size();
+bool verifyQuadratic(QuadPfTranscript& pf, Point* const gs, Point* const hs,
+                    size_t n, const Scalar& eq, MerlinBPctx& mer,
+                    Scalar *uOffsets, Scalar *vOffsets) {
     size_t original_n = n;
-    Point* const gs = st.gs.data();
-    Point* const hs = st.hs.data();
 
     // Include the commitment to the witness
     mer.processPoint("C", pf.C);
 
     // Get the generator F
     Point F = mer.newGenerator("F");
-    Point C = pf.C + F*st.equalsTo;
+    Point C = pf.C + F*eq;
 
     size_t logN = log2roundUp(n);
     if (pf.Ls.size() != logN || pf.Rs.size() != logN) {
@@ -464,7 +458,11 @@ bool verifyNormSquared(const std::set<size_t>& indexes,
         st.equalsTo -= xto2i;
         xto2i *= x2;
     }
-    return verifyQuadratic(pf, st, mer);  // The actual verification
+    size_t n = st.gs.size();
+    Point* const gs = st.gs.data();  // the G generators
+    Point* const hs = st.hs.data();  // the H generators
+    return verifyQuadratic(pf, gs, hs, n, st.equalsTo, mer);
+                                    // The actual verification
 }
 
 

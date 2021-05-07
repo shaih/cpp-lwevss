@@ -52,8 +52,9 @@ bool test_linear() {
     MerlinBPctx mer2 = mer;  //backup for verification
     FlatLinStmt st2 = st; st2.witness.clear(); // a copy without the witness
 
-    proveLinear(proof, r, mer, as, bs, gs, n);    // The actual proof
-    if (!verifyLinear(proof, st2, mer2, offset))  // The actual verification
+    proveLinear(proof, r, mer, as, bs, gs, n);     // The actual proof
+    if (!verifyLinear(proof, st2.statement.data(), // The actual verification
+        st2.generators.data(),st2.generators.size(),st2.equalsTo,mer2,offset))
             return false;
 
     return true;
@@ -112,8 +113,9 @@ bool test_quadratic() {
     FlatQuadStmt st2 = st;  // a copy without the witness
     st2.wG.clear(); st2.wH.clear();
 
-    proveQuadratic(pf, r, mer, gs, as, hs, bs, n);     // The actual proof
-    if (!verifyQuadratic(pf,st2,mer2,offsetG,offsetH)) // The actual verification
+    proveQuadratic(pf, r, mer, gs, as, hs, bs, n); // The actual proof
+    if (!verifyQuadratic(pf, st2.gs.data(), st2.hs.data(), st2.gs.size(),
+            st2.equalsTo, mer2, offsetG, offsetH)) // The actual verification
         return false;
 
     return true;
