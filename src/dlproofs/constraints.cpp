@@ -51,6 +51,20 @@ bool operator==(const CompIter& a, const CompIter& b) { //compare keys
 }
 bool operator!=(const CompIter& a, const CompIter& b) {return !(a==b);}
 
+Scalar innerProduct(const PtxtVec& v1, const PtxtVec& v2) {
+    Scalar sum;
+    auto it1 = v1.begin();
+    auto it2 = v2.begin();
+    while (it1 != v1.end() && it2 != v2.end()) {
+        if (it1->first < it2->first) ++it1;
+        else if (it2->first < it1->first) ++it2;
+        else { // found an element that appears in both
+            sum += it1->second * it2->second;
+            ++it1; ++it2;
+        }
+    }
+    return sum;
+}
 
 // Merges multiple constraints by taking a linear combination of them.
 // The resulting constraint is \sum_i constraints[i]*coeffs[i], where

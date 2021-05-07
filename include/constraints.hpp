@@ -169,6 +169,8 @@ inline int largestKey(const QuadConstraint& c) {
     return (c.indexes.empty()? -1 : *(c.indexes.rbegin()));
 }
 
+Scalar innerProduct(const PtxtVec& v1, const PtxtVec& v2);
+
 // Split the src map into the intersection with teh sliptBy set and
 // the set-difference between them. Return an index one larger than
 // the max index in src and splitBy
