@@ -73,7 +73,8 @@ GlobalKey::GlobalKey(const std::string tg, int k, int m, int n, const EMatrix* c
     if (kay<=0 || emm<=0 || enn<=0) {
         throw std::runtime_error("GlobalKey with invalid parameters");
     }
-    tee = (n-1)/2;
+    tee = ((n-1)/16)*8; // less than n/2, divisible by 8
+    assert(tee>0);       // sanity check
     resize(A,k,m);
     resize(B,enn,m);
 
@@ -86,11 +87,7 @@ GlobalKey::GlobalKey(const std::string tg, int k, int m, int n, const EMatrix* c
         if (crs != nullptr) // use provided CRS
             A[i][j] = (*crs)[i][j];
         else
-#ifndef DEBUGGING
             ALGEBRA::randomizeElement(A[i][j]); // select a new random element
-#else
-            conv(A[i][j], 1);
-#endif
     }
 
     // Compute a hash of the CRS, to be used as its fingerprint

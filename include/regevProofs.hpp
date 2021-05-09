@@ -38,10 +38,37 @@
 #include "shamir.hpp"
 #include "bulletproof.hpp"
 
+#define DEBUGGING
+
 namespace REGEVENC {
 using CRV25519::Point, DLPROOFS::PedersenContext, TOOLS::SharingParams,
     DLPROOFS::MerlinBPctx, DLPROOFS::LinConstraint, DLPROOFS::QuadConstraint;
 // NOTE: REGEVENC::Scalar is not the same as CRV25519::Scalar
+
+
+inline constexpr int PAD_SIZE=4; // add 4 scalars to pad to a specific sum-of-squares
+inline constexpr int smlnsBits =20; // The bitsize of B_smallness below
+
+// We break the decryption error vector into subvectors, each with this many scalars
+#ifndef DEBUGGING
+inline constexpr int DEC_ERRV_SZ=16; // size of decryption noise subvectors
+inline constexpr int JLDIM = 256;    // Target dimension of Johnson–Lindenstrauss
+inline constexpr int LINYDIM=128;    // Target dimension in approximate l-infty proofs
+#else
+inline constexpr int DEC_ERRV_SZ=2;
+inline constexpr int JLDIM = 8;
+inline constexpr int LINYDIM=4;
+#endif
+
+inline void conv(CRV25519::Scalar& to, const ALGEBRA::BigInt& from) {
+    ALGEBRA::bigIntBytes(to.bytes, from, sizeof(to.bytes));
+}
+inline void conv(CRV25519::Scalar& to, const ALGEBRA::Scalar& from) {
+    ALGEBRA::scalarBytes(to.bytes, from, sizeof(to.bytes));
+}
+inline void conv(ALGEBRA::Scalar& to, const CRV25519::Scalar& from) {
+    ALGEBRA::scalarFromBytes(to, from.bytes, sizeof(from.bytes));
+}
 
 typedef std::array<Point,2> TwoPoints;
 typedef std::array<CRV25519::Scalar,2> TwoScalars;
@@ -65,29 +92,6 @@ inline TwoScalars& operator*=(TwoScalars& ts1, const TwoScalars& ts2) {
     ts1[0] *= ts2[0];
     ts1[1] *= ts2[1];
     return ts1;
-}
-
-#define DEBUGGING
-
-inline constexpr int PAD_SIZE=4; // add 4 scalars to pad to a specific sum-of-squares
-// We break the decryption error vector into subvectors, each with this many scalars
-#ifndef DEBUGGING
-inline constexpr int DEC_ERRV_SZ=16; // size of decryption noise subvectors
-inline constexpr int JLDIM = 256;    // Target dimension of Johnson–Lindenstrauss
-inline constexpr int LINYDIM=128;    // Target dimension in approximate l-infty proofs
-#else
-inline constexpr int DEC_ERRV_SZ=2;
-inline constexpr int JLDIM = 8;
-inline constexpr int LINYDIM=4;
-#endif
-inline void conv(CRV25519::Scalar& to, const ALGEBRA::BigInt& from) {
-    ALGEBRA::bigIntBytes(to.bytes, from, sizeof(to.bytes));
-}
-inline void conv(CRV25519::Scalar& to, const ALGEBRA::Scalar& from) {
-    ALGEBRA::scalarBytes(to.bytes, from, sizeof(to.bytes));
-}
-inline void conv(ALGEBRA::Scalar& to, const CRV25519::Scalar& from) {
-    ALGEBRA::scalarFromBytes(to, from.bytes, sizeof(from.bytes));
 }
 
 // More functionality for a Merlin-context wrapper
@@ -177,8 +181,6 @@ struct MerlinRegev: public MerlinBPctx {
         return e;
     }
 };
-
-inline constexpr int smlnsBits = 20; // The bitsize of B_smallness below
 
 // A stucture for holding all the public data that both the prover and
 // the verifier knows. The prover will fill in the commitments, both
@@ -444,6 +446,7 @@ ALGEBRA::BigInt normSquaredBI(ALGEBRA::BIVector& vv);
 ALGEBRA::BigInt normSquaredBigInt(const ALGEBRA::SVector& v);
 ALGEBRA::BigInt normSquaredBigInt(const ALGEBRA::EVector& v);
 ALGEBRA::BigInt normSquaredBigInt(const ALGEBRA::Element* v, size_t len);
+ALGEBRA::BigInt lInftyNorm(const ALGEBRA::EVector& v);
 
 // Add to v four integers a,b,c,d such that the result
 // (v | a,b,c,d) has norm exactly equal to the bound

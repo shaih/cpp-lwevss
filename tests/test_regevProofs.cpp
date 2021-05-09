@@ -198,7 +198,10 @@ bool test_constraints() {
 
 
 bool test_proofs() {
-    GlobalKey gpk("testContext", /*k*/7, /*m*/6, /*n*/5);
+    // The dimensions of the the CRX is k-by-m, but note that this is
+    // a matrix over GF(p^2) so the lattice dimensions we get it twice
+    // that
+    GlobalKey gpk("testContext", /*k*/4, /*m*/3, /*n*/17);
     TernaryEMatrix::init();
     MerlinRegev mer;
     PedersenContext ped;

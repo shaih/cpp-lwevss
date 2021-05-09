@@ -34,7 +34,7 @@ namespace REGEVENC {
 // Some parameters are hard-wired, others are set at runtime
 inline constexpr int sigmaKG=2;  // keygen noise in [+-(2^{sigmaKG}-1)]
 inline constexpr int sigmaEnc1=2; // encryption small noise in [+-(2^{sigmaEnc1}-1)]
-inline constexpr int sigmaEnc2=2; // encryption large noise in [+-(2^{sigmaEnc2}-1)]
+inline constexpr int sigmaEnc2=2;// encryption large noise in [+-(2^{sigmaEnc2}-1)]
 inline constexpr int skSize=2;     // secret key entries in [+-(2^{skSize}-1)]
 inline constexpr int rho=2;        // encryption randomness in [+-(2^{rho}-1)]
 

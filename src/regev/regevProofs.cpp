@@ -625,8 +625,7 @@ void proveSmallness(ProverData& pd) {
         // check that u,z are small enough
         BigInt zBound = (vd.B_smallness*LINYDIM)/(LINYDIM+1);// B_smallness*128/129
         BigInt uBound = zBound/LINYDIM;                      // B_smallness/129
-        if (normSquaredBigInt(u) <= uBound*uBound
-            && normSquaredBigInt(vd.z) <= zBound*zBound) {
+        if (lInftyNorm(u) <= uBound && lInftyNorm(vd.z) <= zBound) {
             *vd.mer = merBkp;
             break;
         }

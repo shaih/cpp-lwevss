@@ -209,6 +209,18 @@ BigInt normSquaredBigInt(const EVector& v) {
     ALGEBRA::conv(vv, v); // convert from GF(p^e) to integers
     return normSquaredBI(vv);
 }
+BigInt lInftyNorm(const EVector& v) {
+    BigInt ret = NTL::ZZ::zero();
+    for (int i=0; i<v.length(); i++) {
+        for (int j=0; j<scalarsPerElement(); j++) {
+            BigInt x = abs(ALGEBRA::balanced( coeff(v[i],j) ));
+            if (ret < x)
+                ret = x;
+        }
+    }
+    return ret;
+}
+
 
 // Add to v four integers a,b,c,d such that the result
 // (v | a,b,c,d) has norm exactly equal to the bound
