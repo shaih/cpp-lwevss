@@ -291,20 +291,20 @@ bool test_proofs() {
 
     // Check the commitments against the quadratic constraints
     for (int i=0; i<vd.nDecSubvectors; i++) {
-        if (!checkQuadConstrain(vd.normConstr[i], vd.decErrCom[i], vd.decErrPadCom[i],
+        if (!checkQuadCommit(vd.normConstr[i], vd.decErrCom[i], vd.decErrPadCom[i],
                             pd.decErrRnd[i], pd.decErrPadRnd[i], witness, vd.ped))
         return false;
     }
-    if (!checkQuadConstrain(*vd.rQuadCnstr, vd.rCom, vd.rPadCom,
-                            pd.rRnd, pd.rPadRnd, witness, vd.ped))
+    if (!checkQuadCommit(*vd.rQuadCnstr, vd.r2Com, vd.r2PadCom,
+                            pd.r2Rnd, pd.r2PadRnd, witness, vd.ped))
         return false;
-    if (!checkQuadConstrain(*vd.encErrQuadCnstr, vd.encErrCom, vd.encErrPadCom,
+    if (!checkQuadCommit(*vd.encErrQuadCnstr, vd.encErrCom, vd.encErrPadCom,
                             pd.encErrRnd, pd.encErrPadRnd, witness, vd.ped))
         return false;
-    if (!checkQuadConstrain(*vd.skQuadCnstr, vd.sk2Com, vd.sk2PadCom,
-                            pd.sk2Rnd, pd.sk2PadRnd, witness, vd.ped))
+    if (!checkQuadCommit(*vd.skQuadCnstr, vd.sk3Com, vd.sk3PadCom,
+                            pd.sk3Rnd, pd.sk3PadRnd, witness, vd.ped))
         return false;
-    if (!checkQuadConstrain(*vd.kgErrQuadCnstr, vd.kGenErrCom, vd.kGenErrPadCom,
+    if (!checkQuadCommit(*vd.kgErrQuadCnstr, vd.kGenErrCom, vd.kGenErrPadCom,
                             pd.kGenErrRnd, pd.kGenErrPadRnd, witness, vd.ped))
         return false;
 
@@ -323,18 +323,30 @@ bool test_proofs() {
     }}
 
     // Encryption commitments
-    {std::vector<Point> encCommits = {vd.pt2Com, vd.rCom[0], vd.encErrCom[0]};
-    std::vector<CRV25519::Scalar> encRand = {pd.pt2Rnd, pd.rRnd[0], pd.encErrRnd[0]};
+    {std::vector<Point> encCommits = {vd.pt2Com, vd.rCom, vd.encErrCom[0]};
+    std::vector<CRV25519::Scalar> encRand = {pd.pt2Rnd, pd.rRnd, pd.encErrRnd[0]};
     for (int i=0; i<scalarsPerElement(); i++) {
         if (!checkLinCommit(vd.encLinCnstr[i].terms, encCommits, encRand, witness, vd.ped))
             return false;
     }}
+    {std::vector<Point> encCommits2 = {vd.rCom, vd.r2Com[0]};
+    std::vector<CRV25519::Scalar> encRand2 = {pd.rRnd, pd.r2Rnd[0]};
+    for (int i=0; i<scalarsPerElement(); i++) {
+        if (!checkLinCommit(vd.encLinCnstr2[i].terms, encCommits2, encRand2, witness, vd.ped))
+            return false;
+    }}
 
     // Key-generation commitments
-    {std::vector<Point> kgCommits = {vd.sk2Com[0], vd.kGenErrCom[0]};
-    std::vector<CRV25519::Scalar> kgRand = {pd.sk2Rnd[0], pd.kGenErrRnd[0]};
+    {std::vector<Point> kgCommits = {vd.sk2Com, vd.kGenErrCom[0]};
+    std::vector<CRV25519::Scalar> kgRand = {pd.sk2Rnd, pd.kGenErrRnd[0]};
     for (int i=0; i<scalarsPerElement(); i++) {
         if (!checkLinCommit(vd.kGenLinCnstr[i].terms, kgCommits, kgRand, witness, vd.ped))
+            return false;
+    }}
+    {std::vector<Point> kgCommits2 = {vd.sk2Com, vd.sk3Com[0]};
+    std::vector<CRV25519::Scalar> kgRand2 = {pd.sk2Rnd, pd.sk3Rnd[0]};
+    for (int i=0; i<scalarsPerElement(); i++) {
+        if (!checkLinCommit(vd.kGenLinCnstr2[i].terms, kgCommits2, kgRand2, witness, vd.ped))
             return false;
     }}
 
@@ -348,13 +360,13 @@ bool test_proofs() {
     }}
 
     // Smallness commitments
-    {std::vector<Point> smlCommits = {vd.sk2Com[0], vd.sk2PadCom[0],
-        vd.kGenErrCom[0], vd.kGenErrPadCom[0], vd.rCom[0], vd.rPadCom[0],
-        vd.encErrCom[0], vd.encErrPadCom[0]
+    {std::vector<Point> smlCommits = {vd.r2Com[0], vd.r2PadCom[0],
+        vd.encErrCom[0], vd.encErrPadCom[0], vd.sk3Com[0], vd.sk3PadCom[0],
+        vd.kGenErrCom[0], vd.kGenErrPadCom[0]
     };
-    std::vector<CRV25519::Scalar> smlRand = {pd.sk2Rnd[0], pd.sk2PadRnd[0],
-        pd.kGenErrRnd[0], pd.kGenErrPadRnd[0], pd.rRnd[0], pd.rPadRnd[0],
-        pd.encErrRnd[0], pd.encErrPadRnd[0]
+    std::vector<CRV25519::Scalar> smlRand = {pd.r2Rnd[0], pd.r2PadRnd[0],
+        pd.encErrRnd[0], pd.encErrPadRnd[0], pd.sk3Rnd[0], pd.sk3PadRnd[0],
+        pd.kGenErrRnd[0], pd.kGenErrPadRnd[0]
     };
     for (int i=0; i<vd.nDecSubvectors; i++) {
         smlCommits.push_back(vd.decErrCom[i][0]);

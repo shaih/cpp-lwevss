@@ -33,8 +33,8 @@ using CRV25519::Point, DLPROOFS::PedersenContext,
 // NOTE: REGEVENC::Scalar is not the same as CRV25519::Scalar
 
 // Proof of decryption. We assume that the ProverData,VerifierData are
-// already initialized, and that ProverData contains sk1 and VerifierData
-// contains a commitment to it.
+// already initialized, and that ProverData contains sk1, VerifierData
+// has a commitment to sk1, and ProverData has the commitment randomness.
 void proveDecryption(ProverData& pd, const SVector& ptxt,
         const EVector& noise, const EMatrix& ctMat, const EVector& ctVec)
 {
@@ -141,7 +141,8 @@ void proveDecryption(ProverData& pd, const SVector& ptxt,
     assert(elementsPerSubvec * vd.nDecSubvectors == noise.length());
 
     // Start by checking that indeed this constraint holds
-    Element sum = innerProduct((*pd.sk1), yvec) + innerProduct(noise, xvec) + innerProduct(ptxt, xvec*vd.gk->g());
+    Element sum = innerProduct((*pd.sk1), yvec)
+        + innerProduct(noise, xvec) + innerProduct(ptxt, xvec*vd.gk->g());
     assert(sum==innerProduct(ctVec, xvec));
 
     // verify the constraints
@@ -168,13 +169,6 @@ void proveDecryption(ProverData& pd, const SVector& ptxt,
 #endif
 }
 
-// Prepare the constrints fo the proof of decryption, at the verifier's site.
-// We assume that the ProverData,VerifierData contains all teh commitments.
-void verifyDecryption(VerifierData& vd, // vd has all the commitments
-        const ALGEBRA::EMatrix& ctMat, const ALGEBRA::EVector& ctVec)
-{
-}
-
 // Proof of encryption. We assume that the ProverData,VerifierData are
 // already initialized.
 void proveEncryption(ProverData& pd, const ALGEBRA::SVector& ptxt,
@@ -189,78 +183,84 @@ void proveEncryption(ProverData& pd, const ALGEBRA::SVector& ptxt,
     vd.pt2Com = commit(*pd.pt2, vd.pt2Idx, vd.Gs, pd.pt2Rnd);
     vd.mer->processPoint("RegevEncPtxt", vd.pt2Com);
     
-    // pad the randomness with four scalars to get l2 norm=B_encRnd
-    pad2exactNorm(rnd, pd.rPadding, vd.B_encRnd);
-
-    // Commit to the randomness and include these commitments in the
-    // Merlin transcript, then choose the trenary matrix R=(R1|R2)
-    // and set noise2=R*noise.
+    // Prepare for choosing the trenary matrix R=(R1|R2) and setting
+    // noise2 = R*noise = R1*noiseA + R2*noiseB.
     EVector noiseA; resize(noiseA, vd.gk->kay); // the two parts of the noise vector
     for (int i=0; i<vd.gk->kay; i++) noiseA[i]=noise[i];
     EVector noiseB; resize(noiseB, vd.gk->enn);
     for (int i=0; i<vd.gk->enn; i++) noiseB[i]=noise[i +vd.gk->kay];
+    // FIXME: Implement R*slice so we don't need to copy these two slices
+    //        into separate vectors
 
-    // Commit to the randomness wrt both the G's and H's
-    vd.rCom[0] = commit(rnd, vd.rIdx, vd.Gs, pd.rRnd[0]);
-    vd.rCom[1] = commit(rnd, vd.rIdx, vd.Hs, pd.rRnd[1]);
-
-    // Commit to the padding wrt both the G's and H's
-    vd.rPadCom[0] = commit(pd.rPadding, vd.rPadIdx, vd.Gs, pd.rPadRnd[0]);
-    // We re-do the last commitment until R*noise is small enough
-
-    vd.mer->processPoint("RegevEncRnd", vd.rCom[0]);
-    vd.mer->processPoint(std::string(), vd.rCom[1]);
-    vd.mer->processPoint(std::string(), vd.rPadCom[0]);
-
-    TernaryEMatrix R1, R2;
+    TernaryEMatrix R1, R2, R3;
     int nRrows = JLDIM/scalarsPerElement();
+
+    // Commit to the randomness wrt the G's. Note that we will re-set
+    // the randomness in this commitment as needed for rejection sampling.
+    vd.rCom = commit(rnd, vd.rIdx, vd.Gs, pd.rRnd);
+
     // while (true) {
     for (int nTrials=1; true; nTrials++) {
+        if (nTrials > 30) {
+            throw std::runtime_error("proveEncryption: too many retries choosing R");
+        }
         auto merBkp = *(vd.mer);
-        vd.rPadCom[1] = commit(pd.rPadding, vd.rPadIdx, vd.Hs, pd.rPadRnd[1]);
-        merBkp.processPoint(std::string(), vd.rPadCom[1]);
+        merBkp.processPoint("RegevencRnd", vd.rCom);
 
         // Get the challenge matrices, and set noise' = (R1|R2)*noise
         merBkp.newTernaryEMatrix("RegevEncR1", R1, nRrows, vd.gk->kay);
         merBkp.newTernaryEMatrix("RegevEncR2", R2, nRrows, vd.gk->enn);
+        merBkp.newTernaryEMatrix("RegevEncR3", R3, nRrows, vd.gk->emm);
 
-        // Compute the lower-dimenstion noise'
+        // Compute the lower-dimenstion r2 and noise2
         pd.encErr = (R1*noiseA) + (R2*noiseB);
-        if (normSquaredBigInt(pd.encErr) <= vd.B_encNoise * vd.B_encNoise) {
+        pd.r2 = R3*(*pd.r);
+        if (normSquaredBigInt(pd.encErr) <= vd.B_encNoise * vd.B_encNoise
+            && normSquaredBigInt(pd.r2) <= vd.B_encRnd * vd.B_encRnd) {
             *(vd.mer) = merBkp;
             break;
         }
-        if (nTrials > 30) {
-            throw std::runtime_error("proveEncryption: too many retrys choosing R");
-        }
-    } // if the noise' is too large, try again
+        // if r2 or noise2 is too large, update the commitment and try again
+        pd.rRnd += CRV25519::Scalar().setInteger(1);
+        vd.rCom += Point::base();
+    }
 
-    // pad noise' with four scalars to get l2 norm=B_encNoise
+    // pad r2 with four scalars to get l2 norm=B_encRnd, commit to it wrt
+    // both the G's and H's
+    pad2exactNorm(pd.r2, pd.r2Padding, vd.B_encRnd);
+    vd.r2Com[0] = commit(pd.r2, vd.r2Idx, vd.Gs, pd.r2Rnd[0]);
+    vd.r2Com[1] = commit(pd.r2, vd.r2Idx, vd.Hs, pd.r2Rnd[1]);
+    vd.r2PadCom[0] = commit(pd.r2Padding, vd.r2PadIdx, vd.Gs, pd.r2PadRnd[0]);
+    vd.r2PadCom[1] = commit(pd.r2Padding, vd.r2PadIdx, vd.Hs, pd.r2PadRnd[1]);
+
+    // pad noise2 with four scalars to get l2 norm=B_encNoise, and commit to
+    // the padding wrt both the G's and H's
     pad2exactNorm(pd.encErr, pd.encErrPadding, vd.B_encNoise);
-
-    // Commit to noise' wrt both the G's and H's
     vd.encErrCom[0] = commit(pd.encErr, vd.encErrIdx, vd.Gs, pd.encErrRnd[0]);
     vd.encErrCom[1] = commit(pd.encErr, vd.encErrIdx, vd.Hs, pd.encErrRnd[1]);
-
-    // Commit to the padding wrt both the G's and H's
-    vd.encErrPadCom[0] = commit(pd.encErrPadding,
-                                vd.encErrPadIdx, vd.Gs, pd.encErrPadRnd[0]);
-    vd.encErrPadCom[1] = commit(pd.encErrPadding,
-                                vd.encErrPadIdx, vd.Hs, pd.encErrPadRnd[1]);
+    vd.encErrPadCom[0] = commit(pd.encErrPadding, vd.encErrPadIdx,
+                              vd.Gs, pd.encErrPadRnd[0]);
+    vd.encErrPadCom[1] = commit(pd.encErrPadding, vd.encErrPadIdx,
+                              vd.Hs, pd.encErrPadRnd[1]);
 
     // include these commitments in the Merlin transcript
+    vd.mer->processPoint("RegevencRnd2", vd.r2Com[0]);
+    vd.mer->processPoint(std::string(), vd.r2Com[1]);
+    vd.mer->processPoint(std::string(), vd.r2PadCom[0]);
+    vd.mer->processPoint(std::string(), vd.r2PadCom[1]);
+
     vd.mer->processPoint("RegevEncNoise", vd.encErrCom[0]);
     vd.mer->processPoint(std::string(), vd.encErrCom[1]);
     vd.mer->processPoint(std::string(), vd.encErrPadCom[0]);
     vd.mer->processPoint(std::string(), vd.encErrPadCom[1]);
 
-    // A challenge element x, defines the vector xvec=(1,x,x^2,...)
-    Element x = vd.mer->newElement("RegevEncChallenge");
-    EVector xvec;
-    powerVector(xvec, x, pd.encErr.length()); // the vector xvec=(1,x,x^2,...)
+    // Record the 1st encryption linear constraint
+    //     <x*R𝟏*𝐀+x*R2*B,r> + <x,noise2> + <g*x*R2,ptxt> = <x,R1*ct1+R2*ct2>
 
-    // Record the linear constraints
-    //     <x*R𝟏*𝐀+x*R2*B,r> + <x,noise'> + <g*x*R2,ptxt> = <x,R1*ct1+R2*ct2>
+    // A challenge element x, defines the vector xvec=(1,x,x^2,...)
+    EVector xvec;
+    Element x = vd.mer->newElement("RegevEncChallenge");
+    powerVector(xvec, x, pd.encErr.length());
 
     // The term <x, R1*ct1+R2*ct2>
     Element eqTo = innerProduct(xvec, (R1*ct1)+(R2*ct2));
@@ -271,19 +271,34 @@ void proveEncryption(ProverData& pd, const ALGEBRA::SVector& ptxt,
     EVector frstTerm = (xvec*R1)*(vd.gk->A) + xR2*(vd.gk->B);
     expandConstraints(vd.encLinCnstr, vd.rIdx, frstTerm);
 
-    // The term <x,noise'>
+    // The term <x,noise2>
     expandConstraints(vd.encLinCnstr, vd.encErrIdx, xvec);
 
     // The term <g*x*R2, ptxt> 
     makeConstraints(vd.encLinCnstr, vd.pt2Idx, vd.gk->g()*xR2);
 
+    // Record the 2nd encryption linear constraint, <x2,r2> -<x2*R3,r> =0
+
+    EVector xvec2;
+    Element x2 = vd.mer->newElement("RegevEncChallenge2");
+    powerVector(xvec2, x2, pd.r2.length());
+
+    // The eqsTo element is zero
+    setEqsTo(vd.encLinCnstr2, Element());
+
+    // The term -<x2*R3,r>
+    expandConstraints(vd.encLinCnstr2, vd.rIdx, -xvec2*R3);
+
+    // The term <x2,r2> 
+    expandConstraints(vd.encLinCnstr2, vd.r2Idx, xvec2);
+
     // Record the norm constraints |paddedRnd|^2=B_encRnd^2 and
-    // |paddedNoise'|^2 =B_encNoise^2.
+    // |paddedNoise2|^2 =B_encNoise^2.
     
-    for (int i=0; i<pd.r->length()*scalarsPerElement(); i++)
-        vd.rQuadCnstr->indexes.insert(vd.rQuadCnstr->indexes.end(), vd.rIdx+i);
+    for (int i=0; i<pd.r2.length()*scalarsPerElement(); i++)
+        vd.rQuadCnstr->indexes.insert(vd.rQuadCnstr->indexes.end(), vd.r2Idx+i);
     for (int i=0; i<PAD_SIZE; i++)
-        vd.rQuadCnstr->indexes.insert(vd.rQuadCnstr->indexes.end(), vd.rPadIdx+i);
+        vd.rQuadCnstr->indexes.insert(vd.rQuadCnstr->indexes.end(), vd.r2PadIdx+i);
     // The norm-squared itself, converted to CRV25519::Scalar
     conv(vd.rQuadCnstr->equalsTo, vd.B_encRnd * vd.B_encRnd);
 
@@ -297,6 +312,7 @@ void proveEncryption(ProverData& pd, const ALGEBRA::SVector& ptxt,
 #ifdef DEBUGGING
     assert( innerProduct(frstTerm, *pd.r) + innerProduct(xvec,pd.encErr)
              + innerProduct(vd.gk->g()*xR2, *pd.pt2) == eqTo );
+    assert( innerProduct(xvec2, pd.r2) == innerProduct(xvec2*R3,*pd.r) );
 
     // verify the constraints
     DLPROOFS::PtxtVec pVec;
@@ -305,6 +321,16 @@ void proveEncryption(ProverData& pd, const ALGEBRA::SVector& ptxt,
         auto& linConstr = vd.encLinCnstr[i];
         if (!checkConstraintLoose(linConstr, pVec)) {
             std::cout << "constraints for encryption #"<<i<<" failed\n  ";
+            prettyPrint(std::cout, linConstr) << std::endl;
+            //std::cout << "  ptxt(idx="<<vd.pt1Idx<<")="<<balanced(ptxt)<<std::endl;
+            //std::cout << "  xvec*g="<<balanced(xvec2)<<std::endl;
+            exit(0);
+        }
+    }
+    for (int i=0; i<scalarsPerElement(); i++) { // check the linear constraints
+        auto& linConstr = vd.encLinCnstr2[i];
+        if (!checkConstraintLoose(linConstr, pVec)) {
+            std::cout << "constraints2 for encryption #"<<i<<" failed\n  ";
             prettyPrint(std::cout, linConstr) << std::endl;
             //std::cout << "  ptxt(idx="<<vd.pt1Idx<<")="<<balanced(ptxt)<<std::endl;
             //std::cout << "  xvec*g="<<balanced(xvec2)<<std::endl;
@@ -335,86 +361,104 @@ void proveKeyGen(ProverData& pd, const ALGEBRA::EVector& sk,
     VerifierData& vd = *(pd.vd);
     pd.sk2 = (ALGEBRA::EVector*) &sk;
 
-    // pad sk with four scalars to get l2 norm=B_sk
-    pad2exactNorm(*pd.sk2, pd.sk2Padding, vd.B_sk);
+    // commitment to the secret key
+    vd.sk2Com = commit(*pd.sk2, vd.sk2Idx, vd.Gs, pd.sk2Rnd);
 
-    // commitment to the secret key and padding, wrt both the Gs and Hs
-    vd.sk2Com[0] = commit(*pd.sk2, vd.sk2Idx, vd.Gs, pd.sk2Rnd[0]);
-    vd.sk2Com[1] = commit(*pd.sk2, vd.sk2Idx, vd.Hs, pd.sk2Rnd[1]);
-    vd.sk2PadCom[0]= commit(pd.sk2Padding, vd.sk2PadIdx, vd.Gs, pd.sk2PadRnd[0]);
-    // We re-do the last commitment until R*noise is small enough
-
-    // Process the commitments
-    vd.mer->processPoint("RegevSK", vd.sk2Com[0]);
-    vd.mer->processPoint(std::string(), vd.sk2Com[1]);
-    vd.mer->processPoint(std::string(), vd.sk2PadCom[0]);
-
-    TernaryEMatrix R;
+    TernaryEMatrix R1, R2;
     int nRcols = JLDIM/scalarsPerElement();
     // while (true) {
     for (int nTrials=1; true; nTrials++) {
-        auto merBkp = *(vd.mer);
-        vd.sk2PadCom[1]= commit(pd.sk2Padding, vd.sk2PadIdx, vd.Hs, pd.sk2PadRnd[1]);
-        merBkp.processPoint(std::string(), vd.sk2PadCom[1]);
-
-        // Get the challenge matrix and set noise' = R*noise
-        merBkp.newTernaryEMatrix("RegevKeyGenR", R, noise.length(), nRcols);
-
-        // Compute the lower-dimenstion noise'
-        pd.kGenErr = noise*R;
-        if (normSquaredBigInt(pd.kGenErr) <= vd.B_kGenNoise * vd.B_kGenNoise) {
-            *(vd.mer) = merBkp;
-            break;
-        }
         if (nTrials > 30) {
             throw std::runtime_error("proveKeyGen: too many retrys choosing R");
         }
-    } // if the noise' is too large, try again
+        auto merBkp = *(vd.mer);
+        merBkp.processPoint("RegevSK", vd.sk2Com);
 
-    // pad the noise' with four scalars to get l2 norm=B_kGenNoise
+        // Get the challenge matrices and set sk3=R1*sk2, noise2 = R2*noise
+        merBkp.newTernaryEMatrix("RegevKeyGenR1", R1, sk.length(), nRcols);
+        merBkp.newTernaryEMatrix("RegevKeyGenR2", R2, noise.length(), nRcols);
+
+        // Compute the lower-dimenstion noise'
+        pd.sk3 = sk*R1;
+        pd.kGenErr = noise*R2;
+        if (normSquaredBigInt(pd.kGenErr) <= vd.B_kGenNoise * vd.B_kGenNoise
+            && normSquaredBigInt(pd.sk3) <= vd.B_sk * vd.B_sk) {
+            *(vd.mer) = merBkp;
+            break;
+        }
+        // if sk3 or noise2 are too large, update the commitment and try again
+        pd.sk2Rnd += CRV25519::Scalar().setInteger(1);
+        vd.sk2Com += Point::base();
+    }
+
+    // pad sk3 and noise2 with four scalars to get l2 norm=B_sk and B_kGenNoise
+    pad2exactNorm(pd.sk3, pd.sk3Padding, vd.B_sk);
     pad2exactNorm(pd.kGenErr, pd.kGenErrPadding, vd.B_kGenNoise);
 
-    // Commit to noise' wrt both the G's and H's
-    vd.kGenErrCom[0] = commit(pd.kGenErr, vd.kGenErrIdx, vd.Gs, pd.kGenErrRnd[0]);
-    vd.kGenErrCom[1] = commit(pd.kGenErr, vd.kGenErrIdx, vd.Hs, pd.kGenErrRnd[1]);
+    // Commit to the vectors and paddings
+    vd.sk3Com[0] = commit(pd.sk3, vd.sk3Idx, vd.Gs, pd.sk3Rnd[0]);
+    vd.sk3Com[1] = commit(pd.sk3, vd.sk3Idx, vd.Hs, pd.sk3Rnd[1]);
+    vd.sk3PadCom[0]=commit(pd.sk3Padding,vd.sk3PadIdx,vd.Gs,pd.sk3PadRnd[0]);
+    vd.sk3PadCom[1]=commit(pd.sk3Padding,vd.sk3PadIdx,vd.Hs,pd.sk3PadRnd[1]);
 
-    // Commit to the padding wrt both the G's and H's
-    vd.kGenErrPadCom[0] = commit(pd.kGenErrPadding,
-                                vd.kGenErrPadIdx, vd.Gs, pd.kGenErrPadRnd[0]);
-    vd.kGenErrPadCom[1] = commit(pd.kGenErrPadding,
-                                vd.kGenErrPadIdx, vd.Hs, pd.kGenErrPadRnd[1]);
+    vd.kGenErrCom[0]=commit(pd.kGenErr,vd.kGenErrIdx,vd.Gs,pd.kGenErrRnd[0]);
+    vd.kGenErrCom[1]=commit(pd.kGenErr,vd.kGenErrIdx,vd.Hs,pd.kGenErrRnd[1]);
+    vd.kGenErrPadCom[0] = commit(pd.kGenErrPadding, vd.kGenErrPadIdx,
+                                vd.Gs, pd.kGenErrPadRnd[0]);
+    vd.kGenErrPadCom[1] = commit(pd.kGenErrPadding, vd.kGenErrPadIdx,
+                                vd.Hs, pd.kGenErrPadRnd[1]);
 
     // include these commitments in the Merlin transcript
-    vd.mer->processPoint("RegevKryGenNoise", vd.kGenErrCom[0]);
+    vd.mer->processPoint("RegevKeyGenSK", vd.sk3Com[0]);
+    vd.mer->processPoint(std::string(), vd.sk3Com[1]);
+    vd.mer->processPoint(std::string(), vd.sk3PadCom[0]);
+    vd.mer->processPoint(std::string(), vd.sk3PadCom[1]);
+
+    vd.mer->processPoint("RegevKeyGenNoise", vd.kGenErrCom[0]);
     vd.mer->processPoint(std::string(), vd.kGenErrCom[1]);
     vd.mer->processPoint(std::string(), vd.kGenErrPadCom[0]);
     vd.mer->processPoint(std::string(), vd.kGenErrPadCom[1]);
+
+    // Record the linear constraints <sk,A*R*x> + <noise',x> = pk*R*x
 
     // A challenge scalar x, defines the vector xvec=(1,x,x^2,...)
     Element x = vd.mer->newElement("RegevKeyGenChallenge");
     EVector xvec;
     powerVector(xvec, x, pd.kGenErr.length()); // the vector xvec=(1,x,x^2,...)
 
-    // Record the linear constraints <sk,A*R*x> + <noise',x> = pk*R*x
-
     // The term pk*R*x
-    EVector Rx = R * xvec;
+    EVector Rx = R2 * xvec;
     Element eqTo = vd.gk->B[pkNum] * Rx;
     setEqsTo(vd.kGenLinCnstr, eqTo);
 
     // The term <sk, A*R*x>
     expandConstraints(vd.kGenLinCnstr, vd.sk2Idx, vd.gk->A * Rx);
 
-    // The term <noise',x>
+    // The term <noise2,x>
     expandConstraints(vd.kGenLinCnstr, vd.kGenErrIdx, xvec);
+
+    // Record the second linear constraints <sk2,R1*x2> -<sk3,x2> = 0
+
+    Element x2 = vd.mer->newElement("RegevKeyGenChallenge2");
+    EVector xvec2;
+    powerVector(xvec2, x2, pd.sk3.length()); // the vector xvec=(1,x,x^2,...)
+
+    setEqsTo(vd.kGenLinCnstr2, Element());
+
+    // The term <sk2, R1*x2>
+    expandConstraints(vd.kGenLinCnstr2, vd.sk2Idx, R1*xvec2);
+
+    // The term -<sk3, x2>
+    expandConstraints(vd.kGenLinCnstr2, vd.sk3Idx, -xvec2);
+
 
     // Record the norm constraints |paddedSK|^2=B_sk^2 and
     // |paddedNoise'|^2 =B_kGenNoise^2.
     
-    for (int i=0; i<pd.sk2->length()*scalarsPerElement(); i++)
-        vd.skQuadCnstr->indexes.insert(vd.skQuadCnstr->indexes.end(), vd.sk2Idx+i);
+    for (int i=0; i<pd.sk3.length()*scalarsPerElement(); i++)
+        vd.skQuadCnstr->indexes.insert(vd.skQuadCnstr->indexes.end(), vd.sk3Idx+i);
     for (int i=0; i<PAD_SIZE; i++)
-        vd.skQuadCnstr->indexes.insert(vd.skQuadCnstr->indexes.end(), vd.sk2PadIdx+i);
+        vd.skQuadCnstr->indexes.insert(vd.skQuadCnstr->indexes.end(), vd.sk3PadIdx+i);
     // The norm-squared itself, converted to CRV25519::Scalar
     conv(vd.skQuadCnstr->equalsTo, vd.B_sk * vd.B_sk);
 
@@ -427,6 +471,7 @@ void proveKeyGen(ProverData& pd, const ALGEBRA::EVector& sk,
 
 #ifdef DEBUGGING
     assert(innerProduct(*pd.sk2, vd.gk->A*Rx)+innerProduct(pd.kGenErr,xvec)==eqTo);
+    assert(innerProduct(pd.sk3, xvec2)==innerProduct(*pd.sk2, R1*xvec2));
 
     // verify the constraints
     DLPROOFS::PtxtVec pVec;
@@ -435,6 +480,15 @@ void proveKeyGen(ProverData& pd, const ALGEBRA::EVector& sk,
         auto& linConstr = vd.kGenLinCnstr[i];
         if (!checkConstraintLoose(linConstr, pVec)) {
             std::cout << "constraints for keyGen #"<<i<<" failed\n  ";
+            prettyPrint(std::cout, linConstr) << std::endl;
+            prettyPrint(std::cout<<"  pVec=", pVec) << std::endl;
+            exit(0);
+        }
+    }
+    for (int i=0; i<scalarsPerElement(); i++) { // check the linear constraints
+        auto& linConstr = vd.kGenLinCnstr2[i];
+        if (!checkConstraintLoose(linConstr, pVec)) {
+            std::cout << "constraints2 for keyGen #"<<i<<" failed\n  ";
             prettyPrint(std::cout, linConstr) << std::endl;
             prettyPrint(std::cout<<"  pVec=", pVec) << std::endl;
             exit(0);
@@ -465,10 +519,11 @@ void proveReShare(ProverData& pd, const TOOLS::EvalSet& recSet) {
 
     // Recall that we have the parity-check matrix H=pd.sp.H such that
     // a vector x is a valid sharing iff H*x=0. In our case the 1st entry
-    // in x is the secret itself, x[0]=\sum_i lagrange[i]*pd.pt1[i], and
-    // the other entries are just the entries of pd.pt2.
+    // in x is the secret itself, computed as
+    //      secret = x[0]=\sum_i lagrange[i]*pd.pt1[i]
+    // The other entries are just the entries of pd.pt2. 
     // Hence the linear constraints for valid re-sharing are for all j:
-    // sum_i lagrange[i]*H[0][j] * pd.pt1[i] + sum_i H[i][j] * pd.pt2[i] = 0
+    // sum_i lagrange[i]*H[0][j]*pd.pt1[i] + sum_i H[i][j]*pd.pt2[i] = 0
 
     const SMatrix& H = vd.sp->H;
     assert(lagrange.length()==pd.pt1->length() && H.NumCols()==1+pd.pt2->length());
@@ -511,68 +566,71 @@ void proveReShare(ProverData& pd, const TOOLS::EvalSet& recSet) {
 #endif
 }
 
-
+// Concatenate all the secrets for the approximate proof of smallness,
+// namely the ones that have padding, all ofver GF(p^ell). For every
+// entry j, idxMap[j] is the index of the first Scalar corresponding
+// to this secret in the various constraints. 
 static EVector concatSecrets(const ProverData& pd, std::vector<int>& idxMap) {
     VerifierData& vd = *(pd.vd);
-    int totalLen = pd.sk2->length() +pd.sk2Padding.length()
-            + pd.kGenErr.length()   +pd.kGenErrPadding.length()
-            + pd.r->length()        +pd.rPadding.length()
-            + pd.encErr.length()    +pd.encErrPadding.length()
-            + pd.decErr->length()   +pd.decErrPadding.length();
+    int totalLen= pd.decErr->length()+ pd.decErrPadding.length()
+            + pd.r2.length()      + pd.r2Padding.length()
+            + pd.encErr.length()  + pd.encErrPadding.length()
+            + pd.sk3.length()     + pd.sk3Padding.length()
+            + pd.kGenErr.length() + pd.kGenErrPadding.length();
     idxMap.resize(totalLen);
 
     EVector v;
     v.SetMaxLength(totalLen); // reserve memory
+
     int start = 0;
-
-    v.append(*pd.sk2);
-    for (int i=start; i<v.length(); i++)
-        idxMap[i] = vd.sk2Idx + (i-start)*scalarsPerElement();
-    start = v.length();
-
-    v.append(pd.sk2Padding);
-    for (int i=start; i<v.length(); i++)
-        idxMap[i] = vd.sk2PadIdx + (i-start)*scalarsPerElement();
-    start = v.length();
-
-    v.append(pd.kGenErr);
-    for (int i=start; i<v.length(); i++)
-        idxMap[i] = vd.kGenErrIdx + (i-start)*scalarsPerElement();
-    start = v.length();
-
-    v.append(pd.kGenErrPadding);
-    for (int i=start; i<v.length(); i++)
-        idxMap[i] = vd.kGenErrPadIdx + (i-start)*scalarsPerElement();
-    start = v.length();
-
-    v.append(*pd.r);
-    for (int i=start; i<v.length(); i++)
-        idxMap[i] = vd.rIdx + (i-start)*scalarsPerElement();
-    start = v.length();
-
-    v.append(pd.rPadding);
-    for (int i=start; i<v.length(); i++)
-        idxMap[i] = vd.rPadIdx + (i-start)*scalarsPerElement();
-    start = v.length();
-
-    v.append(pd.encErr);
-    for (int i=start; i<v.length(); i++)
-        idxMap[i] = vd.encErrIdx + (i-start)*scalarsPerElement();
-    start = v.length();
-
-    v.append(pd.encErrPadding);
-    for (int i=start; i<v.length(); i++)
-        idxMap[i] = vd.encErrPadIdx + (i-start)*scalarsPerElement();
-    start = v.length();
-
     v.append(*pd.decErr);
     for (int i=start; i<v.length(); i++)
         idxMap[i] = vd.decErrIdx + (i-start)*scalarsPerElement();
-    start = v.length();
 
+    start = v.length();
     v.append(pd.decErrPadding);
     for (int i=start; i<v.length(); i++)
         idxMap[i] = vd.decErrPadIdx + (i-start)*scalarsPerElement();
+
+    start = v.length();
+    v.append(pd.r2);
+    for (int i=start; i<v.length(); i++)
+        idxMap[i] = vd.r2Idx + (i-start)*scalarsPerElement();
+
+    start = v.length();
+    v.append(pd.r2Padding);
+    for (int i=start; i<v.length(); i++)
+        idxMap[i] = vd.r2PadIdx + (i-start)*scalarsPerElement();
+
+    start = v.length();
+    v.append(pd.encErr);
+    for (int i=start; i<v.length(); i++)
+        idxMap[i] = vd.encErrIdx + (i-start)*scalarsPerElement();
+
+    start = v.length();
+    v.append(pd.encErrPadding);
+    for (int i=start; i<v.length(); i++)
+        idxMap[i] = vd.encErrPadIdx + (i-start)*scalarsPerElement();
+
+    start = v.length();
+    v.append(pd.sk3);
+    for (int i=start; i<v.length(); i++)
+        idxMap[i] = vd.sk3Idx + (i-start)*scalarsPerElement();
+
+    start = v.length();
+    v.append(pd.sk3Padding);
+    for (int i=start; i<v.length(); i++)
+        idxMap[i] = vd.sk3PadIdx + (i-start)*scalarsPerElement();
+
+    start = v.length();
+    v.append(pd.kGenErr);
+    for (int i=start; i<v.length(); i++)
+        idxMap[i] = vd.kGenErrIdx + (i-start)*scalarsPerElement();
+
+    start = v.length();
+    v.append(pd.kGenErrPadding);
+    for (int i=start; i<v.length(); i++)
+        idxMap[i] = vd.kGenErrPadIdx + (i-start)*scalarsPerElement();
 
     assert(v.length()==totalLen);
     return v;
@@ -585,18 +643,17 @@ void proveSmallness(ProverData& pd) {
     EVector allSecrets = concatSecrets(pd, idxMap);
 
     // Rejection sampling: Repeatedly choose random masking vectors y
-    // and matrices R until both u=(concatenated-variables)*R and z=u+y
-    // are small enough. The vector y is chosen from [+-B_smallness]^128,
-    // and we check that |u|_{infty} < B_smallness/129 and that
-    // |z|_{infty} < B_smallness*128/129.
+    // and matrices R until both u=allSecrets*R and z=u+y are small enough.
+    // The vector y is chosen from [+-B_smallness]^128, and we check that
+    // |u|_{infty} <B_smallness/129 and |z|_{infty} <B_smallness*128/129.
 
     int paddingElements = PAD_SIZE / scalarsPerElement();
     int subvecElements = DEC_ERRV_SZ/scalarsPerElement();
     int JLelement = JLDIM / scalarsPerElement();
 
     int nCols = LINYDIM/scalarsPerElement();
-    int nRows = vd.gk->kay +vd.gk->emm +2*JLelement +paddingElements*4
-                + vd.nDecSubvectors*(subvecElements+paddingElements);
+    int nRows = 4*(JLelement +paddingElements)
+                + vd.nDecSubvectors*(subvecElements +paddingElements);
     assert(allSecrets.length() == nRows);
 
     EVector u;
@@ -629,19 +686,18 @@ void proveSmallness(ProverData& pd) {
             *vd.mer = merBkp;
             break;
         }
-    }
+    } // if u or z are too long, choose another y and try again
 
     // A challenge scalar x, defines the vector xvec=(1,x,x^2,...)
-    vd.mer->processVector(vd.z, (unsigned char*)"masked reply", 12);
+    vd.mer->processVector(vd.z, /*label=*/(unsigned char*)"masked reply",
+                          /*label length=*/12);
     Element x = vd.mer->newElement("SmallnessChallenge");
     EVector xvec;
     powerVector(xvec, x, pd.y.length()); // the vector xvec=(1,x,x^2,...)
 
-    // Record the linear constraint
-    //     (concatenated-variables) * R*x + <y,x> = <z,x>
+    // Record the linear constraint <allSecrets,R*x> + <y,x> = <z,x>
 
     EVector Rx = R*xvec;
-
     for (int i=0; i<idxMap.size(); i++)
         expandConstraints(vd.smlnsLinCnstr, idxMap[i], Rx[i]);
 
@@ -704,27 +760,31 @@ void ReadyToVerify::aggregateVerifier1(VerifierData& vd) {
         vd.decErrCom[i] *= rVec[i];
         vd.decErrPadCom[i] *= rVec[i];
     }
-    vd.rCom *= rVec[vd.nDecSubvectors];
-    vd.rPadCom *= rVec[vd.nDecSubvectors];
+    vd.r2Com *= rVec[vd.nDecSubvectors];
+    vd.r2PadCom *= rVec[vd.nDecSubvectors];
     vd.encErrCom *= rVec[vd.nDecSubvectors+1];
     vd.encErrPadCom *= rVec[vd.nDecSubvectors+1];
-    vd.sk2Com *= rVec[vd.nDecSubvectors+2];
-    vd.sk2PadCom *= rVec[vd.nDecSubvectors+2];
+    vd.sk3Com *= rVec[vd.nDecSubvectors+2];
+    vd.sk3PadCom *= rVec[vd.nDecSubvectors+2];
     vd.kGenErrCom *= rVec[vd.nDecSubvectors+3];
     vd.kGenErrPadCom *= rVec[vd.nDecSubvectors+3];
 
     // Step 3. Aggregate the commitments
-    linCom = vd.sk1Com +vd.pt1Com +vd.pt2Com +vd.yCom;
+    
+    // 3a. The commitment in the linear-only constraint
+    linCom = vd.pt1Com +vd.pt2Com +vd.sk1Com +vd.sk2Com +vd.rCom +vd.yCom;
 
-    quadCom = vd.rCom[0] +vd.rCom[1] +vd.encErrCom[0] +vd.encErrCom[1]
-     +vd.sk2Com[0] +vd.sk2Com[1] +vd.kGenErrCom[0] +vd.kGenErrCom[1]
-     +vd.rPadCom[0] +vd.rPadCom[1] +vd.encErrPadCom[0] +vd.encErrPadCom[1]
-     +vd.sk2PadCom[0] +vd.sk2PadCom[1] +vd.kGenErrPadCom[0] +vd.kGenErrPadCom[1];
+    // 3a. The commitment in the quadratic constraint
+    quadCom = vd.r2Com[0]+vd.r2Com[1]  +vd.r2PadCom[0]    +vd.r2PadCom[1]
+     +vd.encErrCom[0]+vd.encErrCom[1]  +vd.encErrPadCom[0]+vd.encErrPadCom[1]
+     +vd.sk3Com[0]      +vd.sk3Com[1]  +vd.sk3PadCom[0]   +vd.sk3PadCom[1]
+     +vd.kGenErrCom[0]+vd.kGenErrCom[1]+vd.kGenErrPadCom[0]+vd.kGenErrPadCom[1];
     for (int i=0; i<vd.nDecSubvectors; i++) {
         quadCom += vd.decErrCom[i][0] + vd.decErrCom[i][1]
                         + vd.decErrPadCom[i][0] + vd.decErrPadCom[i][1];
     }
 }
+
 void ReadyToProve::aggregateProver(ProverData& pd)
 {
     // Collect all the secret variables
@@ -747,20 +807,20 @@ void ReadyToProve::aggregateProver(ProverData& pd)
         pd.decErrPadRnd[i] *= factor;
     }
 
-    for (auto& idx: vd.rQuadCnstr->indexes) // encryption randomness
+    for (auto& idx: vd.rQuadCnstr->indexes) // compressed encryption randomness
         quadWitnessG[idx] *= rVec[vd.nDecSubvectors];
-    pd.rRnd *= rVec[vd.nDecSubvectors];
-    pd.rPadRnd *= rVec[vd.nDecSubvectors];
+    pd.r2Rnd *= rVec[vd.nDecSubvectors];
+    pd.r2PadRnd *= rVec[vd.nDecSubvectors];
 
     for (auto& idx: vd.encErrQuadCnstr->indexes) // encryption noise
         quadWitnessG[idx] *= rVec[vd.nDecSubvectors+1];
     pd.encErrRnd *= rVec[vd.nDecSubvectors+1];
     pd.encErrPadRnd *= rVec[vd.nDecSubvectors+1];
 
-    for (auto& idx: vd.skQuadCnstr->indexes) // secret key
+    for (auto& idx: vd.skQuadCnstr->indexes) // compressed secret key
         quadWitnessG[idx] *= rVec[vd.nDecSubvectors+2];
-    pd.sk2Rnd *= rVec[vd.nDecSubvectors+2];
-    pd.sk2PadRnd *= rVec[vd.nDecSubvectors+2];
+    pd.sk3Rnd *= rVec[vd.nDecSubvectors+2];
+    pd.sk3PadRnd *= rVec[vd.nDecSubvectors+2];
 
     for (auto& idx: vd.kgErrQuadCnstr->indexes) // key-generation noise
         quadWitnessG[idx] *= rVec[vd.nDecSubvectors+3];
@@ -774,7 +834,7 @@ void ReadyToProve::aggregateProver(ProverData& pd)
     for (auto& qc : pd.vd->normConstr) qc = emptyQuad;}
 
     // Aggregate the commitment randomness for linear-only variables
-    lComRnd = pd.sk1Rnd +pd.pt1Rnd +pd.pt2Rnd +pd.yRnd;
+    lComRnd = pd.pt1Rnd +pd.pt2Rnd +pd.sk1Rnd +pd.sk2Rnd +pd.rRnd +pd.yRnd;
 #ifdef DEBUGGING
     assert(checkConstraintLoose(quadCnstr, quadWitnessG, quadWitnessG));
     {std::vector<CRV25519::Scalar> linWt;
@@ -788,10 +848,10 @@ void ReadyToProve::aggregateProver(ProverData& pd)
 #endif
 
     // Aggregate commitment randomness for the quadratic variables
-    qComRnd = pd.rRnd[0] +pd.rRnd[1] +pd.encErrRnd[0] +pd.encErrRnd[1]
-     +pd.sk2Rnd[0] +pd.sk2Rnd[1] +pd.kGenErrRnd[0] +pd.kGenErrRnd[1]
-     +pd.rPadRnd[0] +pd.rPadRnd[1] +pd.encErrPadRnd[0] +pd.encErrPadRnd[1]
-     +pd.sk2PadRnd[0] +pd.sk2PadRnd[1] +pd.kGenErrPadRnd[0] +pd.kGenErrPadRnd[1];
+    qComRnd = pd.r2Rnd[0] +pd.r2Rnd[1]  +pd.r2PadRnd[0]     +pd.r2PadRnd[1]
+     +pd.encErrRnd[0] +pd.encErrRnd[1]  +pd.encErrPadRnd[0] +pd.encErrPadRnd[1]
+     +pd.sk3Rnd[0]    +pd.sk3Rnd[1]     +pd.sk3PadRnd[0]    +pd.sk3PadRnd[1]
+     +pd.kGenErrRnd[0]+pd.kGenErrRnd[1] +pd.kGenErrPadRnd[0]+pd.kGenErrPadRnd[1];
     for (int i=0; i<vd.nDecSubvectors; i++) {
         qComRnd += pd.decErrRnd[i][0] + pd.decErrRnd[i][1]
                         + pd.decErrPadRnd[i][0] + pd.decErrPadRnd[i][1];
@@ -812,7 +872,7 @@ void ReadyToProve::aggregateProver(ProverData& pd)
     // Compute and commit to the outcome of the linear-only constraint
     linWitness[vd.wIdx] = quadWitnessG[vd.wIdx]
                         = DLPROOFS::innerProduct(bs, linWitness);
-    const CRV25519::Scalar& w = quadWitnessG[vd.wIdx];
+    const CRV25519::Scalar& w = quadWitnessG[vd.wIdx];// just for convenience
     pd.wRnd = CRV25519::randomScalar();
     assert(vd.wIdx == vd.Gs.size()-1);
     Point& wG = vd.Gs[vd.wIdx];
@@ -860,23 +920,23 @@ void ReadyToProve::aggregateProver(ProverData& pd)
     // add the offsets deltaG, deltaH into quadWitnessG, quadWitnessH
     quadWitnessH = quadWitnessG;           // so far we only used quadWitnessG
     quadWitnessH[vd.wIdx] = CRV25519::Scalar(); // quadWitnessH doesn't have w
-    auto itWG = quadWitnessG.begin();
-    auto itDG = deltaG.begin();
-    while (itWG != quadWitnessG.end() && itDG != deltaG.end()) {
-        assert(itWG->first == itDG->first);
-        itWG->second -= itDG->second;
-        itWG++; itDG++;
+    auto itWitG = quadWitnessG.begin();
+    auto itDeltaG = deltaG.begin();
+    while (itWitG != quadWitnessG.end() && itDeltaG != deltaG.end()) {
+        assert(itWitG->first == itDeltaG->first);
+        itWitG->second -= itDeltaG->second;
+        itWitG++; itDeltaG++;
     }
-    assert(itWG == quadWitnessG.end() && itDG == deltaG.end());
+    assert(itWitG == quadWitnessG.end() && itDeltaG == deltaG.end());
 
-    auto itWH = quadWitnessH.begin();
-    auto itDH = deltaH.begin();
-    while (itWH != quadWitnessH.end() && itDH != deltaH.end()) {
-        assert(itWH->first == itDH->first);
-        itWH->second -= itDH->second;
-        itWH++; itDH++;
+    auto itWitH = quadWitnessH.begin();
+    auto itDeltaH = deltaH.begin();
+    while (itWitH != quadWitnessH.end() && itDeltaH != deltaH.end()) {
+        assert(itWitH->first == itDeltaH->first);
+        itWitH->second -= itDeltaH->second;
+        itWitH++; itDeltaH++;
     }
-    assert(itWH == quadWitnessH.end() && itDH == deltaH.end());
+    assert(itWitH == quadWitnessH.end() && itDeltaH == deltaH.end());
 #ifdef DEBUGGING
     assert(checkConstraint(quadCnstr, quadWitnessG, quadWitnessH));
     assert(checkConstraint(linCnstr, linWitness));

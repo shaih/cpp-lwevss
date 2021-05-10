@@ -36,7 +36,7 @@ static bool test_decode() {
 }
 
 static bool test_Regev() {
-    GlobalKey gpk("testContext",/*k*/100,/*m*/80,/*n*/8);
+    GlobalKey gpk("testContext",/*k*/100,/*m*/80,/*n*/17);
     ALGEBRA::EVector noise1;
     auto [sk1,pk1] = gpk.genKeys(&noise1);
     auto [sk2,pk2] = gpk.genKeys();

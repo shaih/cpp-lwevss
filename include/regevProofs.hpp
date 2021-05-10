@@ -205,36 +205,40 @@ struct VerifierData {
 
     // For most vectors, we have both the vector itself (e.g., decErr*1) and
     // the padding that the prover computes to pad it to some pre-determined
-    // size (e.g., decErr*2). The only ones without padding are pt1, pt2, y
+    // size (e.g., decErr*2).
+    // The ones without padding are sk1, sk2, r, pt1, pt2, y
 
     int nDecSubvectors; // number of decryption-noise subvectors
 
     // indexes into the generator list
-    int pt1Idx, sk1Idx, decErrIdx, decErrPadIdx,        // decryption
-        pt2Idx, rIdx, rPadIdx, encErrIdx, encErrPadIdx, // encryption
-        sk2Idx, sk2PadIdx, kGenErrIdx, kGenErrPadIdx,   // key generation
-        yIdx, wIdx;                    // smallness proof and aggregation
+    int pt1Idx, sk1Idx, decErrIdx, decErrPadIdx,                // decryption
+        pt2Idx, rIdx, r2Idx, r2PadIdx, encErrIdx, encErrPadIdx, // encryption
+        sk2Idx, sk3Idx, sk3PadIdx, kGenErrIdx, kGenErrPadIdx,  // key generation
+        yIdx, wIdx;                        // smallness proof and aggregation
 
     // Commitments to different variables. The quadratic equations require
     // two commitment per variable, one with G generators and the other
-    // with H generators. So everything except pt1, pt2, y needs TwoPoints
+    // with H generators.
 
     // dec noise will be broken into a number of pieces, for each peice
     // we will commit separately to the noise itself and to the padding,
-    // and each of these will be committed twice, wrt the Gs and te Hs.
+    // each will be committed twice, wrt the Gs and the Hs.
     std::vector<TwoPoints> decErrCom, decErrPadCom;
 
-    // Most everything else is two commitment per vector
-    TwoPoints rCom, rPadCom, encErrCom, encErrPadCom,
-            sk2Com, sk2PadCom, kGenErrCom, kGenErrPadCom;
+    // These vectors only need one commitment wrt the Gs
+    Point sk1Com, sk2Com, rCom, pt1Com, pt2Com, yCom, wCom;
 
-    Point sk1Com, pt1Com, pt2Com, yCom, wCom;
+    // These require two commitment per vector, one for G and one for H
+    TwoPoints r2Com, encErrCom, sk3Com, kGenErrCom;
+    TwoPoints r2PadCom, encErrPadCom, sk3PadCom, kGenErrPadCom;
 
+    // A list of all the linear and quadratic constraints
     std::vector<DLPROOFS::LinConstraint> linConstr;
     std::vector<DLPROOFS::QuadConstraint> normConstr;
 
-    // pointers into the above vectors
-    DLPROOFS::LinConstraint *decLinCnstr, *encLinCnstr, *kGenLinCnstr, *reShrLinCnstr, *smlnsLinCnstr;
+    // pointers into the above vectors of constraints
+    DLPROOFS::LinConstraint *decLinCnstr, *encLinCnstr, *encLinCnstr2,
+                *kGenLinCnstr, *kGenLinCnstr2, *reShrLinCnstr, *smlnsLinCnstr;
     DLPROOFS::QuadConstraint *rQuadCnstr, *encErrQuadCnstr, *skQuadCnstr, *kgErrQuadCnstr;
 
     ALGEBRA::EVector z; // the masked vector z from the proof of smallness
@@ -246,15 +250,16 @@ struct VerifierData {
     // Reset when preparing for a new proof at the prover's site
     void prepareForNextProof() {
         std::swap(sk1Idx,sk2Idx);
-        sk1Com = sk2Com[0]; // copy commitment to the previous sk wrt the Gs
+        sk1Com = sk2Com; // copy commitment to the previous sk wrt the Gs
 
         // zero out all the commitments and constraints
-        TwoPoints empty2points;
+        TwoPoints empty2points = {Point::identity(),Point::identity()};
         decErrCom.assign(decErrCom.size(), empty2points);
-        decErrPadCom.assign(decErrPadCom.size(), empty2points);
-        rCom =rPadCom =encErrCom =encErrPadCom =sk2Com =sk2PadCom
-            =kGenErrCom =kGenErrPadCom =empty2points;
-        pt1Com = pt2Com = yCom = wCom = Point::identity();
+        decErrPadCom.assign(decErrPadCom.size(),empty2points);
+        r2Com =encErrCom =sk3Com =kGenErrCom =empty2points;
+        r2PadCom =encErrPadCom =sk3PadCom =kGenErrPadCom =empty2points;
+
+        sk2Com =rCom =pt1Com =pt2Com =yCom =wCom = Point::identity();
 
         // empty the constraints w/o invalidating the pointers to them
         DLPROOFS::LinConstraint emptyLin;
@@ -273,31 +278,32 @@ struct VerifierData {
 struct ProverData {
     VerifierData *vd;
 
-    // commitment randomness: For most vectors we have four commitment,
-    // to the vector and its padding, each wrt both the Gs and the Hs.
-    // For decryption noise we have four commitments per subvector.
-    // The plaintext and the y vector have just one commitment each.
+    // commitment randomness: For vectors involved in quadratic constraints
+    // we have two commitment, wrt both the Gs and the Hs. For decryption
+    // noise we thus have four commitments per subvector.
+    // The linear-only vectors have just one commitment, wrt the Gs.
     std::vector<TwoScalars> decErrRnd, decErrPadRnd;
-    TwoScalars rRnd, rPadRnd, encErrRnd, encErrPadRnd,
-                sk2Rnd, sk2PadRnd, kGenErrRnd, kGenErrPadRnd;
-    CRV25519::Scalar sk1Rnd, pt1Rnd, pt2Rnd, yRnd, wRnd;
 
-    // committed values: all except pt1, pt2, y consist of the original
-    // vector, and padding to make them of a certain public size. For
-    // the original vector we just keep a pointer to them, for the padding
-    // we allocate separate EVectors to hold them.
+    TwoScalars r2Rnd, encErrRnd, sk3Rnd, kGenErrRnd;
+    TwoScalars r2PadRnd, encErrPadRnd, sk3PadRnd, kGenErrPadRnd;
+    CRV25519::Scalar rRnd, sk1Rnd, sk2Rnd, pt1Rnd, pt2Rnd, yRnd, wRnd;
 
-    ALGEBRA::EVector *sk1, *decErr, *r, *sk2;
+    // The secret committed variables: For the original vectors used in
+    // the scheme itself we just keep a pointer to them, for the extra
+    // vectors in the proofs we allocate separate EVectors to hold them
+
+    ALGEBRA::EVector *sk1, *sk2, *decErr, *r;
     ALGEBRA::SVector *pt1, *pt2;
 
-    ALGEBRA::EVector decErrPadding, rPadding, 
-        encErr, encErrPadding, sk2Padding, kGenErr, kGenErrPadding, y;
+    ALGEBRA::EVector decErrPadding, r2, r2Padding;
+    ALGEBRA::EVector encErr, encErrPadding, sk3, sk3Padding,
+                     kGenErr, kGenErrPadding, y;
 
     // Collect the secret variables in a DLPROOFS::PtxtVec map
 
-    // Collect the secret variables that only appear in linear proofs (sk1,pt1,pt2,y)
+    // Collect the secret variables that only appear in linear proofs (sk1,sk2,r,pt1,pt2,y)
     void assembleLinearWitness(DLPROOFS::PtxtVec& witness);
-    // Collect the secret variables that also appear in norm proofs (eberything else)
+    // Collect the secret variables that also appear in norm proofs (everything else)
     void assembleNormWitness(DLPROOFS::PtxtVec& witness);
 
     void assembleFullWitness(DLPROOFS::PtxtVec& witness) { // all of them
@@ -308,37 +314,46 @@ struct ProverData {
     // Reset when preparing for a new proof at the prover's site
     void prepareForNextProof() {
         vd->prepareForNextProof(); // reset the public data
-        sk1Rnd = sk2Rnd[0]; // randomness of commitment to secret key wrt Gs
-        sk1 = sk2;          // the secret key itself
+        sk1Rnd = sk2Rnd; // randomness of commitment to secret key wrt Gs
+        sk1 = sk2;       // the secret key itself
 
         // zero-out everything else
         TwoScalars empty2scalars;
         decErrRnd.assign(vd->nDecSubvectors, empty2scalars);
         decErrPadRnd.assign(vd->nDecSubvectors, empty2scalars);
-        rRnd =rPadRnd =encErrRnd =encErrPadRnd =sk2Rnd
-            =sk2PadRnd =kGenErrRnd =kGenErrPadRnd =empty2scalars;
-        pt1Rnd =pt2Rnd =yRnd =wRnd = CRV25519::Scalar();
+        r2Rnd =encErrRnd =sk3Rnd =kGenErrRnd =empty2scalars;
+        r2PadRnd =encErrPadRnd =sk3PadRnd =kGenErrPadRnd =empty2scalars;
+        rRnd =sk2Rnd =pt1Rnd =pt2Rnd =yRnd =wRnd = CRV25519::Scalar();
 
         decErr = r = sk2 = nullptr;
         pt1 = pt2 = nullptr;
-        clear(decErrPadding);  clear(rPadding);
-        clear(encErr);     clear(encErrPadding);  clear(sk2Padding);
-        clear(kGenErr);    clear(kGenErrPadding); clear(y);
+        clear(r2);      clear(r2Padding);
+        clear(encErr);  clear(encErrPadding);
+        clear(sk3);;    clear(sk3Padding);
+        clear(kGenErr); clear(kGenErrPadding);
+        clear(decErrPadding); clear(y);
     }
 
     ProverData() = default;    
     ProverData(VerifierData& verData): vd(&verData) {
-        // Allocate space for commitment randomness to decryption noise
         int paddingSize = ALGEBRA::ceilDiv(PAD_SIZE,ALGEBRA::scalarsPerElement());
+        // Allocate space for commitment randomness to decryption noise
         decErrRnd.resize(vd->nDecSubvectors);
         decErrPadRnd.resize(vd->nDecSubvectors);
         // Allocate space for padding
         ALGEBRA::resize(decErrPadding, vd->nDecSubvectors*paddingSize);
-        ALGEBRA::resize(rPadding, paddingSize);
+        ALGEBRA::resize(r2Padding, paddingSize);
         ALGEBRA::resize(encErrPadding, paddingSize);
-        ALGEBRA::resize(sk2Padding, paddingSize);
+        ALGEBRA::resize(sk3Padding, paddingSize);
         ALGEBRA::resize(kGenErrPadding, paddingSize);
-        sk1 = decErr = r = sk2 = nullptr;
+
+        // NOTE: we are not allocating memory for r2, sk3, encErr, kGenErr
+        // These will be allocated when we compute them.
+        // size of JL-compressed vectors
+        //int compressedVecSize 
+        //          = ALGEBRA::ceilDiv(JLDIM,ALGEBRA::scalarsPerElement());
+    
+        sk1 = sk2 = decErr = r = nullptr;
         pt1 = pt2 = nullptr;
     }
 };
@@ -440,6 +455,10 @@ Point commit(const ALGEBRA::SVector& v, size_t genIdx,
 Point commit(const ALGEBRA::EVector& v, size_t genIdx,
              const std::vector<Point>& Gs, CRV25519::Scalar& r,
              int fromIdx=0, int toIdx=-1);
+// commit to the same xes wrt both Gs and Hs
+Point commit2(const ALGEBRA::EVector& v, size_t genIdx,
+             const std::vector<Point>& Gs, const std::vector<Point>& Hs,
+             CRV25519::Scalar& r, int fromIdx=0, int toIdx=-1);
 
 // Compute the norm-squared of v as a bigInt (no modular reduction)
 ALGEBRA::BigInt normSquaredBI(ALGEBRA::BIVector& vv);
@@ -502,7 +521,7 @@ inline std::ostream& prettyPrint(std::ostream& st, const DLPROOFS::QuadConstrain
     return st;
 }
 
-bool checkQuadConstrain(DLPROOFS::QuadConstraint& c,
+bool checkQuadCommit(DLPROOFS::QuadConstraint& c,
     const TwoPoints& coms, const TwoPoints& padComs, const TwoScalars& rnds,
     const TwoScalars& padRnds, DLPROOFS::PtxtVec& witness, PedersenContext* ped);
 bool checkLinCommit(DLPROOFS::PtxtVec& pv,

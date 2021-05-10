@@ -52,16 +52,18 @@ VerifierData::VerifierData(GlobalKey& g, PedersenContext& p,
     setIndexes(); // compute al the indexes into the G,H arrays
     computeGenerators();   // compute the generators themselves
 
-    // Allocate empty constraints. For each of Decryption, Encryption,
-    // KeyGen, and approximate smallness, we have one linear constraints
-    // over GF(p^ell)). In addition, we have n+1-t linear constraints
-    // over Z_p for the proof of correct re-sharing
-    linConstr.resize(4*scalarsPerElement() + g.enn-g.tee+1);
-    decLinCnstr = &(linConstr[0]);
-    encLinCnstr = &(linConstr[scalarsPerElement()]);
-    kGenLinCnstr = &(linConstr[2*scalarsPerElement()]);
-    smlnsLinCnstr = &(linConstr[3*scalarsPerElement()]);
-    reShrLinCnstr= &(linConstr[4*scalarsPerElement()]);
+    // Allocate empty constraints. For decryption and approximate smallness
+    // we have one linear constraints over GF(p^ell)), and for encryption
+    // and key generation we have two. In addition, we have n+1-t linear
+    // constraints over Z_p for the proof of correct re-sharing.
+    linConstr.resize(6*scalarsPerElement() + g.enn-g.tee+1);
+    decLinCnstr  = &(linConstr[0]);
+    encLinCnstr  = &(linConstr[scalarsPerElement()]);
+    encLinCnstr2 = &(linConstr[2*scalarsPerElement()]);
+    kGenLinCnstr = &(linConstr[3*scalarsPerElement()]);
+    kGenLinCnstr2= &(linConstr[4*scalarsPerElement()]);
+    smlnsLinCnstr= &(linConstr[5*scalarsPerElement()]);
+    reShrLinCnstr= &(linConstr[6*scalarsPerElement()]);
 
     // Then we have nDecSubvectors norm constraints for the subvectors of
     // the decryption noise, and one more norm constraint for each of the
@@ -92,8 +94,8 @@ void VerifierData::setIndexes() {
 
     // number of scalar variables representing each of the vectors
     int pt1Len, skLen, decErrLen, // decryption
-        pt2Len, rLen, encErrLen,  // encryption
-        kGenErrLen, decErrPadLen; // key generation and padding
+        pt2Len, rLen, r2Len, encErrLen,  // encryption
+        sk3Len, kGenErrLen, decErrPadLen;// key generation and padding
 
     // the len variables denote the total number of scalars it takes to
     // represent each vector. Most of these vectors are over GF(P^ell),
@@ -102,26 +104,28 @@ void VerifierData::setIndexes() {
     skLen = gk->kay * gk->ell;
     decErrLen = gk->tee * gk->ell; // = DEC_ERRV_SZ * nDecSubvectors
     rLen = gk->emm * gk->ell;
-    encErrLen = kGenErrLen = JLDIM;
+    encErrLen = kGenErrLen = r2Len = sk3Len = JLDIM;
     pt1Len = gk->tee;
     pt2Len = gk->enn;
     decErrPadLen = PAD_SIZE * nDecSubvectors;
 
-    // The indexes, in order: sk2,decErr,r,encErr,kGenErr,sk1,pt1,pt2,y
-    sk2Idx       = 0;
-    sk2PadIdx    = sk2Idx + skLen;
-    decErrIdx    = sk2PadIdx + PAD_SIZE;
+    // The indexes, the quadratic variables first
+    decErrIdx    = 0;
     decErrPadIdx = decErrIdx + decErrLen;
-    rIdx         = decErrPadIdx + decErrPadLen;
-    rPadIdx      = rIdx + rLen;
-    encErrIdx    = rPadIdx + PAD_SIZE;
+    r2Idx        = decErrPadIdx + decErrPadLen;
+    r2PadIdx     = r2Idx + r2Len;
+    encErrIdx    = r2PadIdx + PAD_SIZE;
     encErrPadIdx = encErrIdx + encErrLen;
-    kGenErrIdx   = encErrPadIdx + PAD_SIZE;
+    sk3Idx       = encErrPadIdx + PAD_SIZE;
+    sk3PadIdx    = sk3Idx + sk3Len;
+    kGenErrIdx   = sk3PadIdx + PAD_SIZE;
     kGenErrPadIdx= kGenErrIdx + kGenErrLen;
-    sk1Idx       = kGenErrPadIdx + PAD_SIZE;
-    pt1Idx       = sk1Idx + skLen;
+    pt1Idx       = kGenErrPadIdx + PAD_SIZE;
     pt2Idx       = pt1Idx + pt1Len;
-    yIdx         = pt2Idx + pt2Len;
+    sk1Idx       = pt2Idx + pt2Len;
+    sk2Idx       = sk1Idx + skLen;
+    rIdx         = sk2Idx + skLen;
+    yIdx         = rIdx + rLen;
     wIdx         = yIdx + LINYDIM;
 }
 
@@ -177,6 +181,27 @@ Point commit(const EVector& v, size_t genIdx,
         }
     r.randomize();
     return DLPROOFS::commit(&(Gs[genIdx]), xes.data(), xes.size(), r);
+}
+// Commit to the same xes wrt both Gs and Hs
+Point commit2(const EVector& v, size_t genIdx,
+             const std::vector<Point>& Gs, const std::vector<Point>& Hs,
+             CRV25519::Scalar& r, int fromIdx, int toIdx) {
+    if (toIdx<0)
+        toIdx = v.length();
+    int n = scalarsPerElement()*(toIdx-fromIdx);
+    if (Gs.size() < genIdx +n || Hs.size() < genIdx +n) {
+        throw std::runtime_error("commit: G/H generators not defined");
+    }
+    std::vector<CRV25519::Scalar> xes(n);
+    size_t idx = 0;
+    for (size_t i=fromIdx; i<toIdx; i++)
+        for (size_t j=0; j<scalarsPerElement(); j++) {
+            conv(xes[idx], coeff(v[i], j));
+            idx++;
+        }
+    r.randomize();
+    return DLPROOFS::commit2(&(Gs[genIdx]), xes.data(),
+                             &(Hs[genIdx]), xes.data(), xes.size(), r);
 }
 
 
@@ -346,13 +371,13 @@ void ProverData::assembleNormWitness(DLPROOFS::PtxtVec& witness) {
     if (decErr) addToWitness(witness, vd->decErrIdx, *decErr);
     addToWitness(witness, vd->decErrPadIdx, decErrPadding);
 
-    if (r) addToWitness(witness, vd->rIdx, *r);
-    addToWitness(witness, vd->rPadIdx, rPadding);
+    addToWitness(witness, vd->r2Idx, r2);
+    addToWitness(witness, vd->r2PadIdx, r2Padding);
     addToWitness(witness, vd->encErrIdx, encErr);
     addToWitness(witness, vd->encErrPadIdx, encErrPadding);
 
-    if (sk2) addToWitness(witness, vd->sk2Idx, *sk2);
-    addToWitness(witness, vd->sk2PadIdx, sk2Padding);
+    addToWitness(witness, vd->sk3Idx, sk3);
+    addToWitness(witness, vd->sk3PadIdx, sk3Padding);
     addToWitness(witness, vd->kGenErrIdx, kGenErr);
     addToWitness(witness, vd->kGenErrPadIdx, kGenErrPadding);
 }
@@ -360,6 +385,8 @@ void ProverData::assembleNormWitness(DLPROOFS::PtxtVec& witness) {
 // Collect all the secret cariables in a DLPROOFS::PtxtVec map
 void ProverData::assembleLinearWitness(DLPROOFS::PtxtVec& witness) {
     if (sk1) addToWitness(witness, vd->sk1Idx, *sk1);
+    if (sk2) addToWitness(witness, vd->sk2Idx, *sk2);
+    if (r) addToWitness(witness, vd->rIdx, *r);
     if (pt1) addToWitness(witness, vd->pt1Idx, *pt1);
     if (pt2) addToWitness(witness, vd->pt2Idx, *pt2);
     addToWitness(witness, vd->yIdx, y);
@@ -369,7 +396,7 @@ void ProverData::assembleLinearWitness(DLPROOFS::PtxtVec& witness) {
 
 // debugging tools
 
-bool checkQuadConstrain(DLPROOFS::QuadConstraint& c,
+bool checkQuadCommit(DLPROOFS::QuadConstraint& c,
     const TwoPoints& coms, const TwoPoints& padComs, const TwoScalars& rnds,
     const TwoScalars& padRnds, DLPROOFS::PtxtVec& witness, PedersenContext* ped)
 {
