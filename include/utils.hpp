@@ -39,6 +39,13 @@ FourSqrts decompose4(BigInt n);
 
 inline int ceilDiv(int a, int b) { return (a+b-1)/b;}
 
+// Compute the norm of v as a bigInt (no modular reduction)
+BigInt normSquaredBI(BIVector& vv);
+BigInt normSquaredBigInt(const SVector& v);
+BigInt normSquaredBigInt(const EVector& v);
+BigInt normSquaredBigInt(const Element* v, size_t len);
+BigInt lInftyNorm(const EVector& v);
+
 inline std::set<int> interval(int from, int to) {
     std::set<int> intSet;
     for (int i=from; i<to; i++) intSet.insert(intSet.end(), i);

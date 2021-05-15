@@ -35,8 +35,24 @@ static bool test_decode() {
     return true;
 }
 
+bool test_params()
+{
+    KeyParams kp(256);
+    /*std::cout << "n:"<< kp.n
+        << ", k:" << kp.k
+        << ", m:" << kp.m
+        << ", s_kg:" << kp.sigmaKG
+        << ", s_e1:" << kp.sigmaEnc1
+        << ", s_e2:" << kp.sigmaEnc2 << std::endl;*/
+    return (kp.n==512 && kp.k==6300 && kp.m==6263 &&
+            kp.sigmaKG==86 && kp.sigmaEnc1==87 && kp.sigmaEnc2==97);
+}
+
 static bool test_Regev() {
-    GlobalKey gpk("testContext",/*k*/100,/*m*/80,/*n*/17);
+    KeyParams kp;
+    kp.k=64; kp.m=64; kp.n=64;
+    kp.sigmaKG=10; kp.sigmaEnc1=10; kp.sigmaEnc2=20;
+    GlobalKey gpk("testContext",kp);
     ALGEBRA::EVector noise1;
     auto [sk1,pk1] = gpk.genKeys(&noise1);
     auto [sk2,pk2] = gpk.genKeys();
@@ -67,7 +83,7 @@ static bool test_Regev() {
 // and BoundedSizeScalar from regevEnc.hpp
 
 int main(int, char**) {
-    if (!test_Regev())
+    if (!test_params() || !test_Regev())
         std::cout << LWEVSS_TESTS::failed << std::endl;
     else
         std::cout << LWEVSS_TESTS::passed << std::endl;        

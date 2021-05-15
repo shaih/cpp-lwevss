@@ -23,31 +23,98 @@
  **/
 #include <cassert>
 #include <numeric>
+#include "algebra.hpp"
 #include "regevProofs.hpp"
 
-using namespace ALGEBRA;
+namespace ALGEBRA {
+// Compute the norm-squared of v as a bigInt (not modular reduction)
+BigInt normSquaredBI(BIVector& vv) {
+    // map integers to the range [-P/2,P/2]
+    const BigInt POver2 = REGEVENC::GlobalKey::P() / 2;
+    for (size_t i=0; i<vv.length(); i++) {
+        if (vv[i] > POver2)
+            vv[i] -= REGEVENC::GlobalKey::P();
+    }
+    BigInt normSquared;
+    InnerProduct(normSquared, vv, vv);
+    return normSquared;
+}
+BigInt normSquaredBigInt(const SVector& v) {
+    BIVector vv;
+    conv(vv, v); // convert from sclars mod P to integers
+    return normSquaredBI(vv);
+}
+BigInt normSquaredBigInt(const Element* v, size_t len) {
+    BIVector vv;
+    resize(vv, len*scalarsPerElement());
+    for (size_t i=0; i<len; i++) for (size_t j=0; j<scalarsPerElement(); j++)
+        conv(vv[i*scalarsPerElement() +j], coeff(v[i], j));
+    return normSquaredBI(vv);
+}
+BigInt normSquaredBigInt(const EVector& v) {
+    BIVector vv;
+    ALGEBRA::conv(vv, v); // convert from GF(p^e) to integers
+    return normSquaredBI(vv);
+}
+BigInt lInftyNorm(const EVector& v) {
+    BigInt ret = NTL::ZZ::zero();
+    for (int i=0; i<v.length(); i++) {
+        for (int j=0; j<scalarsPerElement(); j++) {
+            BigInt x = abs(ALGEBRA::balanced( coeff(v[i],j) ));
+            if (ret < x)
+                ret = x;
+        }
+    }
+    return ret;
+}
+} // end of ALGEBRA namespace
 
+using namespace ALGEBRA;
 namespace REGEVENC {
 using CRV25519::Point, DLPROOFS::PedersenContext,
     DLPROOFS::MerlinBPctx, DLPROOFS::LinConstraint, DLPROOFS::QuadConstraint;
 // NOTE: REGEVENC::Scalar is not the same as CRV25519::Scalar
 
 VerifierData::VerifierData(GlobalKey& g, PedersenContext& p,
-                           MerlinRegev& m, const SharingParams& _sp) {
+                           MerlinRegev& mr, const SharingParams& _sp) {
     gk = &g;
     ped = &p;
-    mer = &m;
+    mer = &mr;
     sp = (SharingParams*) &_sp;
 
-    // FIXME: compute the nounds from the gk parameters
+    // The params k,m,n in scalars (rather than GF(p^ell) elements)
+    int k = g.kay*g.ell;
+    int m = g.emm*g.ell;
+    int n = g.enn*g.ell;
 
-    B_decNoise = BigInt(1)<<10; // bounds each sub-vector of decryption noise
-    B_sk = BigInt(1)<<10;        // bounds the secret-key size
-    B_encRnd = BigInt(1)<<10;    // bounds the encryption randomness size
-    B_encNoise = BigInt(1)<<10;  // bounds the size of the encryption noise
-    B_kGenNoise = BigInt(1)<<10; // bounds the size of the keygen noise
-    B_smallness = BigInt(1)<<smlnsBits; // Used in the smallness proof
-        // smlnsBits is defined in regevProofs.hpp (20 for debugging)
+    // A bound on the l2 norm of the decryption sub-vectors, which
+    // is four times the l-infinity noise bound for decryption.
+    // NOTE: Persumably that's a probability-one bound, we can get a
+    // somewhat better high-probability bound if we are willing to deal
+    // with low-probability failures
+    BigInt one(1);
+    BigInt A = one<<g.sigmaKG;
+    BigInt B = one<<g.sigmaEnc2;
+    BigInt C = one<<g.sigmaEnc1;
+    B_decNoise = NTL::SqrRoot(multDbl(5.6454, k*(k*A*A+n*B*B)+m*C))*4;
+
+    B_sk = NTL::to_ZZ(sqrt(448*k));     // bounds the secret-key size
+    B_kGenNoise =multDbl(sqrt(46*m),A); // keygen noise
+
+    B_encRnd = NTL::to_ZZ(sqrt(448*m));  // bounds the enc randomness
+    // the encryption noise bound: sqrt(0.36*(2^{2*s_e1}*k + 2^{2*s_e2}*n))
+    B_encNoise = (one<<(2*g.sigmaEnc1))*k + (one<<(2*g.sigmaEnc2))*n;
+    B_encNoise = NTL::SqrRoot(46*B_encNoise);
+
+    // The y shifted vector has l-infinity 3584*sqrt(dimOver2)*B_decNoise/4
+    smlnsBits = 118;
+    B_smallness = one<<smlnsBits;               // Make into a power of two
+    //B_smallness = multDbl(sqrt(dimOver2), 896*B_decNoise);
+#ifdef DEBUGGING
+    std::cout << "{ k:"<<k <<", m:"<<m << ", n:"<<n << std::endl;
+    std::cout << "  sigmaKG:"<<g.sigmaKG<<", sigmaEnc1:"<<g.sigmaEnc1
+        << ", sigmaEnc2:"<<g.sigmaEnc2 << "}\n";
+#endif
 
     setIndexes(); // compute al the indexes into the G,H arrays
     computeGenerators();   // compute the generators themselves
@@ -203,49 +270,6 @@ Point commit2(const EVector& v, size_t genIdx,
     return DLPROOFS::commit2(&(Gs[genIdx]), xes.data(),
                              &(Hs[genIdx]), xes.data(), xes.size(), r);
 }
-
-
-// Compute the norm-squared of v as a bigInt (not modular reduction)
-BigInt normSquaredBI(BIVector& vv) {
-    // map integers to the range [-P/2,P/2]
-    const BigInt POver2 = GlobalKey::P() / 2;
-    for (size_t i=0; i<vv.length(); i++) {
-        if (vv[i] > POver2)
-            vv[i] -= GlobalKey::P();
-    }
-    BigInt normSquared;
-    InnerProduct(normSquared, vv, vv);
-    return normSquared;
-}
-BigInt normSquaredBigInt(const SVector& v) {
-    BIVector vv;
-    conv(vv, v); // convert from sclars mod P to integers
-    return normSquaredBI(vv);
-}
-BigInt normSquaredBigInt(const Element* v, size_t len) {
-    BIVector vv;
-    resize(vv, len*scalarsPerElement());
-    for (size_t i=0; i<len; i++) for (size_t j=0; j<scalarsPerElement(); j++)
-        conv(vv[i*scalarsPerElement() +j], coeff(v[i], j));
-    return normSquaredBI(vv);
-}
-BigInt normSquaredBigInt(const EVector& v) {
-    BIVector vv;
-    ALGEBRA::conv(vv, v); // convert from GF(p^e) to integers
-    return normSquaredBI(vv);
-}
-BigInt lInftyNorm(const EVector& v) {
-    BigInt ret = NTL::ZZ::zero();
-    for (int i=0; i<v.length(); i++) {
-        for (int j=0; j<scalarsPerElement(); j++) {
-            BigInt x = abs(ALGEBRA::balanced( coeff(v[i],j) ));
-            if (ret < x)
-                ret = x;
-        }
-    }
-    return ret;
-}
-
 
 // Add to v four integers a,b,c,d such that the result
 // (v | a,b,c,d) has norm exactly equal to the bound

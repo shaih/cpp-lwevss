@@ -47,7 +47,6 @@ using CRV25519::Point, DLPROOFS::PedersenContext, TOOLS::SharingParams,
 
 
 inline constexpr int PAD_SIZE=4; // add 4 scalars to pad to a specific sum-of-squares
-inline constexpr int smlnsBits =20; // The bitsize of B_smallness below
 
 // We break the decryption error vector into subvectors, each with this many scalars
 #ifndef DEBUGGING
@@ -55,9 +54,9 @@ inline constexpr int DEC_ERRV_SZ=16; // size of decryption noise subvectors
 inline constexpr int JLDIM = 256;    // Target dimension of Johnson–Lindenstrauss
 inline constexpr int LINYDIM=128;    // Target dimension in approximate l-infty proofs
 #else
-inline constexpr int DEC_ERRV_SZ=2;
-inline constexpr int JLDIM = 8;
-inline constexpr int LINYDIM=4;
+inline constexpr int DEC_ERRV_SZ=16;
+inline constexpr int JLDIM = 256;
+inline constexpr int LINYDIM=128;
 #endif
 
 inline void conv(CRV25519::Scalar& to, const ALGEBRA::BigInt& from) {
@@ -200,6 +199,7 @@ struct VerifierData {
     ALGEBRA::BigInt B_encNoise;// bounds the size of the encryption noise
     ALGEBRA::BigInt B_kGenNoise;// bounds the size of the keygen noise
     ALGEBRA::BigInt B_smallness;// Used in the approximate smallness protocol
+    int smlnsBits =25; // The bitsize of B_smallness above
 
     std::vector<Point> Gs, Hs; // lists of generators
 
@@ -459,13 +459,6 @@ Point commit(const ALGEBRA::EVector& v, size_t genIdx,
 Point commit2(const ALGEBRA::EVector& v, size_t genIdx,
              const std::vector<Point>& Gs, const std::vector<Point>& Hs,
              CRV25519::Scalar& r, int fromIdx=0, int toIdx=-1);
-
-// Compute the norm-squared of v as a bigInt (no modular reduction)
-ALGEBRA::BigInt normSquaredBI(ALGEBRA::BIVector& vv);
-ALGEBRA::BigInt normSquaredBigInt(const ALGEBRA::SVector& v);
-ALGEBRA::BigInt normSquaredBigInt(const ALGEBRA::EVector& v);
-ALGEBRA::BigInt normSquaredBigInt(const ALGEBRA::Element* v, size_t len);
-ALGEBRA::BigInt lInftyNorm(const ALGEBRA::EVector& v);
 
 // Add to v four integers a,b,c,d such that the result
 // (v | a,b,c,d) has norm exactly equal to the bound

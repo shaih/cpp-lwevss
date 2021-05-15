@@ -25,6 +25,7 @@
 #include <NTL/ZZ.h>
 #include <NTL/mat_ZZ.h>
 #include <NTL/mat_ZZ_pE.h>
+#include <NTL/RR.h>
 
 /* This header provides copmatibility with NTL, inside the ALGEBRA namespace.
  * Modules that use it should use the names that it provides rather than
@@ -181,6 +182,19 @@ inline void conv(BIVector& to, const EVector& from) {
     for (int i=0; i<from.length(); i++) for (int j=0; j<scalarsPerElement(); j++) {
         conv(to[idx++], ALGEBRA::coeff(from[i], j));
     }
+}
+
+// Implemet a version of BigInt-by-double multiplication
+inline BigInt multDbl(double x, const BigInt& y) {
+    NTL::RR ry = NTL::to_RR(y);
+    ry *= x;
+    return NTL::to_ZZ(ry);
+}
+inline BigInt multDbl(const BigInt& y, double x) {
+    return multDbl(x,y);
+}
+inline double log2BI(const BigInt& x) {
+    return NTL::conv<double>(NTL::log(NTL::to_RR(x))/0.69314718056);
 }
 
 typedef NTL::RandomStreamPush PRGbackupClass; // backup/restore of PRG state

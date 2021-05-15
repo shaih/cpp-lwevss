@@ -21,9 +21,13 @@
  * ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
  * OTHER DEALINGS IN THE SOFTWARE.
  **/
+#define DEBUGGING
 #include <cassert>
 #include "utils.hpp"
 #include "regevProofs.hpp"
+#ifdef DEBUGGING
+#include <NTL/RR.h>
+#endif
 
 using namespace ALGEBRA;
 
@@ -41,7 +45,11 @@ void proveDecryption(ProverData& pd, const SVector& ptxt,
     VerifierData& vd = *(pd.vd);
     pd.pt1 = (SVector*) &ptxt;
     pd.decErr = (EVector*) &noise;
-
+#ifdef DEBUGGING
+    std::cout << "|decNoise|_infty=2^"<<log2BI(lInftyNorm(noise))
+        << ", |decNoise|^2=2^"<<log2BI(normSquaredBigInt(noise))
+        <<", B_decNoise=2^"<<log2BI(vd.B_decNoise)<<std::endl;
+#endif
     // commitment to decrypted plaintext
     vd.pt1Com = commit(ptxt, vd.pt1Idx, vd.Gs, pd.pt1Rnd);
     vd.mer->processPoint("RegevDecPtxt", vd.pt1Com);
@@ -173,8 +181,7 @@ void proveDecryption(ProverData& pd, const SVector& ptxt,
 // already initialized.
 void proveEncryption(ProverData& pd, const ALGEBRA::SVector& ptxt,
         const ALGEBRA::EVector& rnd, const ALGEBRA::EVector& noise,
-        const ALGEBRA::EVector& ct1, const ALGEBRA::EVector& ct2)
-{
+        const ALGEBRA::EVector& ct1, const ALGEBRA::EVector& ct2) {
     VerifierData& vd = *(pd.vd);
     pd.pt2 = (ALGEBRA::SVector*) &ptxt;
     pd.r   = (ALGEBRA::EVector*) &rnd;
@@ -182,7 +189,19 @@ void proveEncryption(ProverData& pd, const ALGEBRA::SVector& ptxt,
     // commitment to encrypted plaintext
     vd.pt2Com = commit(*pd.pt2, vd.pt2Idx, vd.Gs, pd.pt2Rnd);
     vd.mer->processPoint("RegevEncPtxt", vd.pt2Com);
-    
+
+#if 0 // ifdef DEBUGGING
+    BigInt one(1);
+    BigInt tmp = one<<(vd.gk->rho);
+    BigInt tmp1 = one<<(vd.gk->sigmaEnc1);
+    BigInt tmp2 = one<<(vd.gk->sigmaEnc2);
+    NTL::RR rndBound = NTL::conv<NTL::RR>(vd.gk->emm * vd.gk->ell* tmp*tmp);
+    NTL::RR errBound = NTL::conv<NTL::RR>(
+        vd.gk->kay*vd.gk->ell*tmp1*tmp1 + vd.gk->enn*vd.gk->ell*tmp2*tmp2);
+    NTL::RR ratioNoise = NTL::conv<NTL::RR>(normSquaredBigInt(noise))/errBound;
+    NTL::RR ratioRnd = NTL::conv<NTL::RR>(normSquaredBigInt(rnd))/rndBound;
+    std::cout << "|r|="<<sqrt(ratioRnd)<<"*mu_r, |e|="<<sqrt(ratioNoise)<<"*u_e\n";
+#endif
     // Prepare for choosing the trenary matrix R=(R1|R2) and setting
     // noise2 = R*noise = R1*noiseA + R2*noiseB.
     EVector noiseA; resize(noiseA, vd.gk->kay); // the two parts of the noise vector
@@ -215,9 +234,21 @@ void proveEncryption(ProverData& pd, const ALGEBRA::SVector& ptxt,
         // Compute the lower-dimenstion r2 and noise2
         pd.encErr = (R1*noiseA) + (R2*noiseB);
         pd.r2 = R3*(*pd.r);
-        if (normSquaredBigInt(pd.encErr) <= vd.B_encNoise * vd.B_encNoise
+#ifdef DEBUGGING
+        {BigInt e1 = normSquaredBigInt(noise);
+        BigInt e2 = normSquaredBigInt(pd.encErr);
+        std::cout << "encryption: |e|^2=2^"<< log2BI(e1)
+            << ", |e'|^2=2^"<<log2BI(e2)
+            <<", B_encNoise^2=2^"<<(2*log2BI(vd.B_encNoise))<<std::endl;
+        e1 = normSquaredBigInt(rnd);
+        e2 = normSquaredBigInt(pd.r2);
+        std::cout << "            |r|^2=2^"<< log2BI(e1)
+            << ", |r'|^2=2^"<<log2BI(e2)
+            <<", B_encRnd^2=2^"<<(2*log2BI(vd.B_encRnd))<<std::endl;}
+#endif
+       if (normSquaredBigInt(pd.encErr) <= vd.B_encNoise * vd.B_encNoise
             && normSquaredBigInt(pd.r2) <= vd.B_encRnd * vd.B_encRnd) {
-            *(vd.mer) = merBkp;
+             *(vd.mer) = merBkp;
             break;
         }
         // if r2 or noise2 is too large, update the commitment and try again
@@ -363,6 +394,16 @@ void proveKeyGen(ProverData& pd, const ALGEBRA::EVector& sk,
 
     // commitment to the secret key
     vd.sk2Com = commit(*pd.sk2, vd.sk2Idx, vd.Gs, pd.sk2Rnd);
+#if 0 // ifdef DEBUGGING
+    BigInt one; conv(one, 1);
+    BigInt tmp = one<<(vd.gk->skSize)-1;
+    BigInt tmp1 = one<<(vd.gk->sigmaKG)-1;
+    NTL::RR skBound = NTL::conv<NTL::RR>(vd.gk->kay * vd.gk->ell* tmp*tmp);
+    NTL::RR errBound = NTL::conv<NTL::RR>(vd.gk->emm * vd.gk->ell* tmp1*tmp1);
+    NTL::RR ratioNoise = NTL::conv<NTL::RR>(normSquaredBigInt(noise))/errBound;
+    NTL::RR ratiosk = NTL::conv<NTL::RR>(normSquaredBigInt(sk))/skBound;
+    std::cout << "|s|="<<sqrt(ratiosk)<<"*mu_s, |e|="<<sqrt(ratioNoise)<<"*u_e\n";
+#endif
 
     TernaryEMatrix R1, R2;
     int nRcols = JLDIM/scalarsPerElement();
@@ -381,6 +422,18 @@ void proveKeyGen(ProverData& pd, const ALGEBRA::EVector& sk,
         // Compute the lower-dimenstion noise'
         pd.sk3 = sk*R1;
         pd.kGenErr = noise*R2;
+#ifdef DEBUGGING
+        {BigInt e1 = normSquaredBigInt(noise);
+        BigInt e2 = normSquaredBigInt(pd.kGenErr);
+        std::cout << "keygen: |e|^2=2^"<< log2BI(e1)
+            << ", |e'|^2=2^"<<log2BI(e2)
+            <<", B_kGenNoise^2=2^"<<(2*log2BI(vd.B_kGenNoise))<<std::endl;
+        e1 = normSquaredBigInt(sk);
+        e2 = normSquaredBigInt(pd.sk3);
+        std::cout << "            |sk|^2=2^"<< log2BI(e1)
+            << ", |sk'|^2=2^"<<log2BI(e2)
+            <<", B_sk^2=2^"<<(2*log2BI(vd.B_sk))<<std::endl;}
+#endif
         if (normSquaredBigInt(pd.kGenErr) <= vd.B_kGenNoise * vd.B_kGenNoise
             && normSquaredBigInt(pd.sk3) <= vd.B_sk * vd.B_sk) {
             *(vd.mer) = merBkp;
@@ -567,8 +620,8 @@ void proveReShare(ProverData& pd, const TOOLS::EvalSet& recSet) {
 }
 
 // Concatenate all the secrets for the approximate proof of smallness,
-// namely the ones that have padding, all ofver GF(p^ell). For every
-// entry j, idxMap[j] is the index of the first Scalar corresponding
+// namely the ones that have padding, all vectors over GF(p^ell). For
+// each entry j, idxMap[j] is the index of the 1st Scalar corresponding
 // to this secret in the various constraints. 
 static EVector concatSecrets(const ProverData& pd, std::vector<int>& idxMap) {
     VerifierData& vd = *(pd.vd);
@@ -659,7 +712,8 @@ void proveSmallness(ProverData& pd) {
     EVector u;
     TernaryEMatrix R;
     resize(pd.y, nCols);
-    BoundedSizeElement randomzr(smlnsBits); // for choosing in [+-2^smlnsBits]
+    BoundedSizeElement randomzr(vd.smlnsBits); // for choosing in [+-2^smlnsBits]
+    int uRetries = 0, zRetries = 0;
     for (int nTrials=0; true; nTrials++) {
         if (nTrials > 99) {
             throw std::runtime_error("proveSmallness: too many retrys choosing R");
@@ -678,14 +732,32 @@ void proveSmallness(ProverData& pd) {
         merBkp.newTernaryEMatrix("Smallness", R, nRows, nCols);
         u = allSecrets * R;
         vd.z = u + pd.y;
-
+#if 0 //def DEBUGGING
+        std::cout << "smallness |secrets|_infty=2^"<<log2BI(lInftyNorm(allSecrets))
+            << ", |secrets|^2=2^"<<log2BI(normSquaredBigInt(allSecrets))
+            << " (dim=" << (allSecrets.length()*scalarsPerElement())
+            << ")\n";
+        std::cout << "    |u|_infty=2^" << log2BI(lInftyNorm(u))
+            << ", |u|^2=2^"<<log2BI(normSquaredBigInt(u))
+            << " (dim=" << (u.length()*scalarsPerElement()) << ")\n";
+        std::cout << "    |y|_infty=2^" << log2BI(lInftyNorm(pd.y))
+            << ", |z|_infty=2^" << log2BI(lInftyNorm(vd.z)) << std::endl;
+#endif
         // check that u,z are small enough
         BigInt zBound = (vd.B_smallness*LINYDIM)/(LINYDIM+1);// B_smallness*128/129
         BigInt uBound = zBound/LINYDIM;                      // B_smallness/129
         if (lInftyNorm(u) <= uBound && lInftyNorm(vd.z) <= zBound) {
+#ifdef DEBUGGING
+            std::cout << "smallness proofs succeeded after "<<nTrials<< " trials, "
+                << "uRetires="<< uRetries <<", zRetries="<<zRetries<< std::endl;
+#endif
             *vd.mer = merBkp;
             break;
         }
+#ifdef DEBUGGING
+        if (lInftyNorm(u) > uBound) uRetries++;
+        if (lInftyNorm(vd.z) > zBound) zRetries++;
+#endif
     } // if u or z are too long, choose another y and try again
 
     // A challenge scalar x, defines the vector xvec=(1,x,x^2,...)

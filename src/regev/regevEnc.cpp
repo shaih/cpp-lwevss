@@ -24,6 +24,7 @@
 #include <iostream>
 #include <cassert>
 #include "regevEnc.hpp"
+#include "utils.hpp"
 extern "C" {
     #include <sodium.h>
 }
@@ -68,15 +69,80 @@ Element GlobalKey::initPdeltaG() { // Implementation is NTL-specific
     return g; // will be assigned to GlobalKey::gElement
 }
 
-GlobalKey::GlobalKey(const std::string tg, int k, int m, int n, const EMatrix* crs):
-        tag(tg),kay(k),emm(m),enn(n),nPks(0) {
-    if (kay<=0 || emm<=0 || enn<=0) {
+static bool constraint(int n, int logA, int logC, int &k, int &m, int &logB) {
+    k = ceil(37.5*(254-logA));
+    m = ceil(37.5*(254-logC));
+    BigInt A = BigInt(1)<<logA;
+    BigInt C = BigInt(1)<<logC;
+    BigInt B = KeyParams::delta * (multDbl(sqrt(k),A) + multDbl(sqrt(m),C));
+    logB = NumBits(B);
+    B = BigInt(1)<<logB;
+
+    BigInt bound1 = multDbl(1.32*sqrt(m), C);
+    BigInt bound2 = NTL::to_ZZ(3.96*sqrt(k));
+    BigInt bound3 = NTL::SqrRoot(multDbl(1.7424, k*A*A+n*B*B));
+    BigInt bound4 = NTL::to_ZZ(3.96*sqrt(m));
+    BigInt bound5 = NTL::SqrRoot(multDbl(5.6454, k*(k*A*A+n*B*B)+m*C));
+
+    if (multDbl(28*KeyParams::extra*sqrt(5*n/16.0 +520), bound5) > BigInt(1)<<126)
+        return false;
+
+    if (bound1*bound4 + bound2*bound3 + 4*bound5 > BigInt(1)<<125)
+        return false;
+
+    return true;
+}
+
+KeyParams::KeyParams(int _n): n(_n*GlobalKey::ell) {
+    k = m = 10000000; // start from a very large number
+
+    // Find the best solution with A=C, m=k
+    int lA, lB, lC;
+    for (lA=126; lA>80; lA--) { // count downwards
+        if (constraint(n, lA, lA, k, m, lB)) {
+            sigmaKG = sigmaEnc1 = lA;
+            sigmaEnc2 = lB;
+            break;
+        }
+    }
+    
+    // look for solutions with sigmaKG < sigmaEnc1
+    for (lC=lA+1; lC<lA+20; lC++)
+        for (int lA2=lA; lA2>lA-40; lA2--) {
+            int k2, m2;
+            if (constraint(n, lA2, lC, k2, m2, lB) && k2+m2 < k+m) {
+                k = k2;
+                m = m2;
+                sigmaKG = lA2;
+                sigmaEnc1 = lC;
+                sigmaEnc2 = lB;
+            }
+        }
+    // look for solutions with C<A
+    for (lC=lA-1; lC<lA-20; lC--)
+        for (int lA2=lA; lA2<lA+40; lA2++) {
+            int k2, m2;
+            if (constraint(n, lA2, lC, k2, m2, lB) && k2+m2 < k+m) {
+                k = k2;
+                m = m2;
+                sigmaKG = lA2;
+                sigmaEnc1 = lC;
+                sigmaEnc2 = lB;
+            }
+        }
+}
+
+GlobalKey::GlobalKey(const std::string tg, const KeyParams &prms, const EMatrix* crs):
+        nPks(0),tag(tg),kay(prms.k/ell),emm(prms.m/ell),enn(prms.n/ell),
+        sigmaKG(prms.sigmaKG),sigmaEnc1(prms.sigmaEnc1),sigmaEnc2(prms.sigmaEnc2)
+{
+    if (kay<=0 || emm<=0 || enn<=0 || sigmaKG<=1 || sigmaEnc1<=1 || sigmaEnc2<=1) {
         throw std::runtime_error("GlobalKey with invalid parameters");
     }
-    tee = ((n-1)/16)*8; // less than n/2, divisible by 8
+    tee = ((enn-1)/16)*8; // less than n/2, divisible by 8
     assert(tee>0);       // sanity check
-    resize(A,k,m);
-    resize(B,enn,m);
+    resize(A,kay,emm);
+    resize(B,enn,emm);
 
     // Fill the CRS with pseudorandom entries, derived from the tag,
     // also hash them to get a fingerprint
@@ -138,14 +204,27 @@ void GlobalKey::internalKeyGen(EVector& sk, EVector& pk, EVector& noise) const
 
     // Choose a random secret key, each entry in [+-(2^{skSize} -1)]
     BoundedSizeElement rSK(skSize);
-    for (int i=0; i<sk.length(); i++) {
-        rSK.randomize(sk[i]);
+    BigInt bound( ceil(0.47*kay*ell*((1UL<<skSize) -1)*((1UL<<skSize)-1)) );
+    for (int nTrials = 0; ; nTrials++) {
+        if (++nTrials > 100) {
+            throw std::runtime_error("internalKeyGen: too many retrys choosing sk");
+        }
+        for (int i=0; i<sk.length(); i++) rSK.randomize(sk[i]);
+        if (normSquaredBigInt(sk) <= bound)
+            break;
     }
 
     // The error vector entries are chosen from [+-2^{sigmaKG}]
     BoundedSizeElement rNoise(sigmaKG);
-    for (int i=0; i<noise.length(); i++) {
-        rNoise.randomize(noise[i]);
+    bound = (BigInt(1)<<sigmaKG) -1;
+    bound = (9*emm*ell*bound*bound)/25; // 0.36 *m*ell *(2^sigma -1)^2
+    for (int nTrials = 0; ; nTrials++) {
+        if (++nTrials > 100) {
+            throw std::runtime_error("internalKeyGen: too many retrys choosing noise");
+        }
+        for (int i=0; i<noise.length(); i++) rNoise.randomize(noise[i]);
+        if (normSquaredBigInt(noise) <= bound)
+            break;
     }
     pk = sk * A + noise;
     //printEvec(std::cout<<"keygen noise = ",noise) << std::endl;
@@ -169,25 +248,46 @@ void GlobalKey::internalEncrypt(EVector& ctxt1, EVector& ctxt2,
 
     resize(arr,emm);    // the dimension-m encryption-randomness vector
     BoundedSizeElement rEnc(rho);// entries are signed rho-bit integers
-    for (auto& e: arr)
-        rEnc.randomize(e);
-    //printEvec(std::cout<<"encryption randomness = ", arr) << std::endl;
+    BigInt bound( ceil(0.49*emm*ell*((1UL<<rho)-1)*((1UL<<rho)-1)) );
+    //std::cout << "choosing r:";
+    for (int nTrials = 0; ; nTrials++) {
+        if (++nTrials > 100)
+            throw std::runtime_error("internalEncrypt: too many retrys choosing r");
+        for (auto& e: arr) rEnc.randomize(e);
+        if (normSquaredBigInt(arr) <= bound)
+            break;
+        //std::cout << " retry";
+    }
+    //std::cout << std::endl;
 
     // Compute an encrypiton of zero as (CRS*arr, PK*arr)
     ctxt1 = A * arr;
     ctxt2 = B * arr;
 
-    // Add noise, and also g * ptxt to the bottom n rows
+    // choose bounded-size noise
     resize(e, kay+enn);
     BoundedSizeElement noise1(sigmaEnc1),  noise2(sigmaEnc2);
-    for (size_t i=0; i<kay; i++) {
-        noise1.randomize(e[i]);
+    bound = (BigInt(1)<<sigmaEnc1)-1;
+    bound = (9*kay*ell*bound*bound)/25; // 0.36 *k*ell *(2^sigma1 -1)^2
+    {BigInt tmp=(BigInt(1)<<sigmaEnc2)-1;
+    bound += (9*enn*ell*tmp*tmp)/25;}   // + 0.36 *n*ell *(2^sigma2 -1)^2
+    //std::cout << "choosing e: ";
+    for (int nTrials = 0; ; nTrials++) {
+        if (++nTrials > 100)
+            throw std::runtime_error("internalEncrypt: too many retrys choosing r");
+        for (size_t i=0; i<kay; i++) noise1.randomize(e[i]);
+        for (size_t i=0; i<enn; i++) noise2.randomize(e[kay+i]);
+        if (normSquaredBigInt(e) <= bound)
+            break;
+        //std::cout << " retry";
+    }
+    //std::cout << std::endl;
+
+    // Add the noise, and also g * ptxt to the bottom n rows
+    for (size_t i=0; i<kay; i++)
         ctxt1[i] += e[i];
-    }
-    for (size_t i=0; i<enn; i++) {
-        noise2.randomize(e[kay+i]);
+    for (size_t i=0; i<enn; i++)
         ctxt2[i] += g()*ptxt[i] + e[kay+i];
-    }
 }
 
 // Decrypts a ciphertext, returning ptxt and noise. This function gets

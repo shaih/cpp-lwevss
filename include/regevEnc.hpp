@@ -31,12 +31,18 @@
 
 namespace REGEVENC {
 
-// Some parameters are hard-wired, others are set at runtime
-inline constexpr int sigmaKG=2;  // keygen noise in [+-(2^{sigmaKG}-1)]
-inline constexpr int sigmaEnc1=2; // encryption small noise in [+-(2^{sigmaEnc1}-1)]
-inline constexpr int sigmaEnc2=2;// encryption large noise in [+-(2^{sigmaEnc2}-1)]
-inline constexpr int skSize=2;     // secret key entries in [+-(2^{skSize}-1)]
-inline constexpr int rho=2;        // encryption randomness in [+-(2^{rho}-1)]
+struct KeyParams {
+    // By what factor does the encryption noise "flood" the keygen noise
+    static constexpr int delta=8;
+    // ratio |y|/|u| in the l-infty proof of smallness
+    static constexpr int extra=128;
+
+    int k,m,n;
+    int sigmaKG, sigmaEnc1, sigmaEnc2;
+
+    KeyParams() = default;
+    explicit KeyParams(int _n);
+};
 
 // The global key for our Regev encrypiton includes the variour params,
 // the CRS k-by-m matrix A over and the ell*enn-by-emm matrix B with enn
@@ -53,13 +59,21 @@ public:
     static const ALGEBRA::BigInt& delta2ellMinus1() { return delta2ellm1; }
     static const ALGEBRA::Element& g() { return gElement; }
 
-    static constexpr int ell=2; // redundancy parameter, # dimensions per party
+    // Some parameters are hard-wired, others are set at runtime
+    static constexpr int ell=2;    // redundancy parameter, # dimensions per party
+    static constexpr int skSize=2;     // secret key entries in [+-(2^{skSize}-1)]
+    static constexpr int rho=2;        // encryption randomness in [+-(2^{rho}-1)]
 
     std::string tag; // a string to tag this public key
+
     int enn;  // # of parties
     int tee;  // threshold, one more than # of corrupted
     int kay;  // dimension of LWE-secret (over GF(P^ell))
     int emm;  // #-of-columns in the CRS (over GF(P^ell))
+
+    int sigmaKG=85;   // keygen noise in [+-(2^{sigmaKG}-1)]
+    int sigmaEnc1=86; // encryption small noise in [+-(2^{sigmaEnc1}-1)]
+    int sigmaEnc2=96; // encryption large noise in [+-(2^{sigmaEnc2}-1)]
 
     size_t nPks; // number of GF(P^ell) public keys that are stored in B
     ALGEBRA::EMatrix A, B; // The matrix M = (A / B)
@@ -67,7 +81,7 @@ public:
     unsigned char Bhash[32]; // fingerprint of the key B
 
     GlobalKey() = delete;
-    GlobalKey(const std::string tg, int k, int m, int n,
+    GlobalKey(const std::string tg, const KeyParams &prms,
               const ALGEBRA::EMatrix* crs=nullptr); // optional - a pre-selected CRS
 
     const unsigned char* const crsHash() const {return Ahash;}

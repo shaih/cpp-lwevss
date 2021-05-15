@@ -24,58 +24,258 @@
  
 // This file is just a convenience, a handy tool that lets us run
 // small porgrams without having to use the awkward ctest syntax.
+#include <cassert>
+#include <cmath>
 #include <random>
 #include <chrono> 
 using namespace std::chrono; 
 
 #include <NTL/version.h>
 #include "regevEnc.hpp"
+#include "regevProofs.hpp"
 
+using namespace ALGEBRA;
 using namespace REGEVENC;
 
 int main(int, char**) {
     // std::cout << "- Found GMP version "<<__GNU_MP__ <<std::endl;
-    std::cout << "- Found NTL version "<<NTL_VERSION <<std::endl;
+    // std::cout << "- Found NTL version "<<NTL_VERSION <<std::endl;
     // std::cout << "- Found Sodium version "<<SODIUM_VERSION_STRING<<std::endl;
+    // The dimensions of the the CRX is k-by-m, but note that this is
+    // a matrix over GF(p^2) so the lattice dimensions we get it twice
+    // that
+    //KeyParams kp;
+    //kp.k=64; kp.m=64; kp.n=64;
+    //kp.sigmaKG=10; kp.sigmaEnc1=10; kp.sigmaEnc2=20;
+    KeyParams kp(512);
+    //kp.k=2048; kp.m=2048; kp.n=258;// make smaller dimension for debugging
+    GlobalKey gpk("testContext", kp);
+    gpk.sigmaEnc2-=2;
+    TernaryEMatrix::init();
+    MerlinRegev mer;
+    PedersenContext ped;
+    SharingParams ssp(interval(1,gpk.enn+1), gpk.tee);
+    VerifierData vd(gpk, ped, mer, ssp);
+    ProverData pd(vd);
 
-    GlobalKey gpk("testContext",/*k*/10,/*m*/8,/*n*/4);
- 
-    //auto start = high_resolution_clock::now();
-    ALGEBRA::EVector noise1;
-    auto [sk1,pk1] = gpk.genKeys(&noise1);
-    auto [sk2,pk2] = gpk.genKeys();
-    size_t i1 = gpk.addPK(pk1);
-    size_t i2 = gpk.addPK(pk2);
-    for (size_t i=2; i<gpk.enn; i++) // add many more pk's, to use in encryption
-        gpk.addPK(pk2);
-    //auto duration = duration_cast<seconds>(high_resolution_clock::now() - start);
-    //std::cout <<"Time for "<<gpk.enn<<" keygen: "<<duration.count()<< " seconds" << std::endl;
+    // Generate/verify the proofs by the second party (idx=1)
+    int partyIdx = 1;
+
+    // Key generation for the five parties
+    std::vector<ALGEBRA::EVector> kgNoise(gpk.enn);
+    std::vector<ALGEBRA::EVector> sk(gpk.enn);
+    std::vector<ALGEBRA::EVector> pk(gpk.enn);
+    for (int i=0; i<gpk.enn; i++) {
+        std::tie(sk[i],pk[i]) = gpk.genKeys(&kgNoise[i]);
+        gpk.addPK(pk[i]);
+    }
+    gpk.setKeyHash();
 
     // encryption
-    ALGEBRA::SVector ptxt(NTL::INIT_SIZE, gpk.enn);
-    for (auto& p: ptxt)
-        NTL::random(p);
-
-    //start = high_resolution_clock::now();
-    ALGEBRA::EVector r, e;
-    auto ctxt = gpk.encrypt(ptxt, r, e);
-    //duration = duration_cast<seconds>(high_resolution_clock::now() - start);
-    //std::cout << "Time for encryption of "
-    //    <<gpk.enn<<" ptxts: "<<duration.count()<< " seconds" << std::endl;
-
-    //start = high_resolution_clock::now();
-    ALGEBRA::Element decNoise1;
-    auto ptxt1 = gpk.decrypt(sk1, i1, ctxt, &decNoise1);
-    auto ptxt2 = gpk.decrypt(sk2, i2, ctxt);
-    //std::cout << "Time for 2 decryptions: "
-    //  << ((duration_cast<milliseconds>(high_resolution_clock::now() - start)).count()/1000.0)
-    //  << " seconds" << std::endl;
-
-    if (ptxt1 == ptxt[0] && ptxt2 == ptxt[1]) {
-        std::cout << "Yay, decryption succeeded\n";
-    } else {
-        std::cout << "Boo, decryption failed\n";
+    std::vector<ALGEBRA::SVector> ptxt1(gpk.enn);
+    std::vector<GlobalKey::CtxtPair> ctxt1(gpk.enn);
+    // secret sharing of a random value , the secret itself is sshr[0]
+    ALGEBRA::SVector sshr;
+    ssp.randomSharing(sshr);
+    for (int i=0; i<gpk.enn; i++) {
+        resize(ptxt1[i], gpk.enn);
+        for (int j=0; j<gpk.enn; j++) ptxt1[i][j] = sshr[i+1];
+        ctxt1[i] = gpk.encrypt(ptxt1[i]);
     }
+
+    // decryption at party #1
+    ALGEBRA::SVector ptxt2;    resize(ptxt2, gpk.tee);
+    ALGEBRA::EVector decNoise; resize(decNoise, gpk.tee);
+    for (int i=0; i<gpk.tee; i++) { // decrypt 2nd entry in i'th ctxt
+        ptxt2[i] = gpk.decrypt(sk[partyIdx], partyIdx, ctxt1[i], &(decNoise[i]));
+        if (ptxt2[i] != ptxt1[i][partyIdx])
+            return false;
+    }
+
+    // re-encryption at party #1
+    ALGEBRA::SVector ptxt3;
+    resize(ptxt3, gpk.enn);
+    for (int j=0; j<gpk.enn; j++) ptxt3[j] = sshr[j+1];
+    ALGEBRA::EVector encRnd;
+    ALGEBRA::EVector encNoise;
+    auto ctxt2 = gpk.encrypt(ptxt3, encRnd, encNoise);
+
+    // Copy the first t ciphertexts into a k x t matrix and another t-vector
+    EMatrix ctxtMat;
+    resize(ctxtMat, gpk.kay, gpk.tee);
+    EVector ctxtVec;
+    resize(ctxtVec, gpk.tee);
+    for (int i=0; i<gpk.tee; i++) {
+        for (int j=0; j<gpk.kay; j++)
+            ctxtMat[j][i] = ctxt1[i].first[j];
+        ctxtVec[i] = ctxt1[i].second[partyIdx];
+    }
+
+    // prepare for proof, pad the secret key to exact norm and commit to it
+    int origSize = sk[partyIdx].length(); 
+    pd.sk1 = &(sk[partyIdx]);
+
+    // Commit separately to the original key and the padding, each one wrt
+    // both the G's and the Hs
+    vd.sk1Com = commit(sk[partyIdx], vd.sk1Idx, vd.Gs, pd.sk1Rnd);
+
+    proveDecryption(pd, ptxt2, decNoise, ctxtMat, ctxtVec);
+    proveEncryption(pd, ptxt3, encRnd, encNoise, ctxt2.first, ctxt2.second);
+    proveKeyGen(pd, sk[partyIdx], kgNoise[partyIdx], partyIdx);
+    proveReShare(pd, interval(1,gpk.tee+1));
+    proveSmallness(pd);
+
+    // Verify the commitments and constraints
+    DLPROOFS::PtxtVec witness;
+    pd.assembleFullWitness(witness);
+
+    for (auto& lncstr: vd.linConstr) {
+        if (!checkConstraintLoose(lncstr, witness))
+            return 1;
+    }
+    for (auto& qdcstr: vd.normConstr) {
+        if (!checkConstraintLoose(qdcstr, witness, witness))
+            return 1;
+    }
+
+    // Check the commitments against the quadratic constraints
+    for (int i=0; i<vd.nDecSubvectors; i++) {
+        if (!checkQuadCommit(vd.normConstr[i], vd.decErrCom[i], vd.decErrPadCom[i],
+                            pd.decErrRnd[i], pd.decErrPadRnd[i], witness, vd.ped))
+        return 1;
+    }
+    if (!checkQuadCommit(*vd.rQuadCnstr, vd.r2Com, vd.r2PadCom,
+                            pd.r2Rnd, pd.r2PadRnd, witness, vd.ped))
+        return 1;
+    if (!checkQuadCommit(*vd.encErrQuadCnstr, vd.encErrCom, vd.encErrPadCom,
+                            pd.encErrRnd, pd.encErrPadRnd, witness, vd.ped))
+        return 1;
+    if (!checkQuadCommit(*vd.skQuadCnstr, vd.sk3Com, vd.sk3PadCom,
+                            pd.sk3Rnd, pd.sk3PadRnd, witness, vd.ped))
+        return 1;
+    if (!checkQuadCommit(*vd.kgErrQuadCnstr, vd.kGenErrCom, vd.kGenErrPadCom,
+                            pd.kGenErrRnd, pd.kGenErrPadRnd, witness, vd.ped))
+        return 1;
+
+    // Check the commitments against the linear constraints
+
+    // Decryption commitments
+    {std::vector<Point> decCommits = {vd.pt1Com, vd.sk1Com};
+    std::vector<CRV25519::Scalar> decRand = {pd.pt1Rnd, pd.sk1Rnd};
+    for (int i=0; i<vd.nDecSubvectors; i++) {
+        decCommits.push_back(vd.decErrCom[i][0]);
+        decRand.push_back(pd.decErrRnd[i][0]);
+    }
+    for (int i=0; i<scalarsPerElement(); i++) {
+        if (!checkLinCommit(vd.decLinCnstr[i].terms, decCommits, decRand, witness, vd.ped))
+            return 1;
+    }}
+
+    // Encryption commitments
+    {std::vector<Point> encCommits = {vd.pt2Com, vd.rCom, vd.encErrCom[0]};
+    std::vector<CRV25519::Scalar> encRand = {pd.pt2Rnd, pd.rRnd, pd.encErrRnd[0]};
+    for (int i=0; i<scalarsPerElement(); i++) {
+        if (!checkLinCommit(vd.encLinCnstr[i].terms, encCommits, encRand, witness, vd.ped))
+            return 1;
+    }}
+    {std::vector<Point> encCommits2 = {vd.rCom, vd.r2Com[0]};
+    std::vector<CRV25519::Scalar> encRand2 = {pd.rRnd, pd.r2Rnd[0]};
+    for (int i=0; i<scalarsPerElement(); i++) {
+        if (!checkLinCommit(vd.encLinCnstr2[i].terms, encCommits2, encRand2, witness, vd.ped))
+            return 1;
+    }}
+
+    // Key-generation commitments
+    {std::vector<Point> kgCommits = {vd.sk2Com, vd.kGenErrCom[0]};
+    std::vector<CRV25519::Scalar> kgRand = {pd.sk2Rnd, pd.kGenErrRnd[0]};
+    for (int i=0; i<scalarsPerElement(); i++) {
+        if (!checkLinCommit(vd.kGenLinCnstr[i].terms, kgCommits, kgRand, witness, vd.ped))
+            return 1;
+    }}
+    {std::vector<Point> kgCommits2 = {vd.sk2Com, vd.sk3Com[0]};
+    std::vector<CRV25519::Scalar> kgRand2 = {pd.sk2Rnd, pd.sk3Rnd[0]};
+    for (int i=0; i<scalarsPerElement(); i++) {
+        if (!checkLinCommit(vd.kGenLinCnstr2[i].terms, kgCommits2, kgRand2, witness, vd.ped))
+            return 1;
+    }}
+
+    // Resharing commitments
+    {std::vector<Point> reshrCommits = {vd.pt1Com, vd.pt2Com};
+    std::vector<CRV25519::Scalar> reshrRand = {pd.pt1Rnd, pd.pt2Rnd};
+    for (int i=0; i < vd.gk->enn -vd.gk->tee +1; i++) {
+        if (!checkLinCommit(vd.reShrLinCnstr[i].terms,
+                               reshrCommits, reshrRand, witness, vd.ped))
+            return 1;
+    }}
+
+    // Smallness commitments
+    {std::vector<Point> smlCommits = {vd.r2Com[0], vd.r2PadCom[0],
+        vd.encErrCom[0], vd.encErrPadCom[0], vd.sk3Com[0], vd.sk3PadCom[0],
+        vd.kGenErrCom[0], vd.kGenErrPadCom[0]
+    };
+    std::vector<CRV25519::Scalar> smlRand = {pd.r2Rnd[0], pd.r2PadRnd[0],
+        pd.encErrRnd[0], pd.encErrPadRnd[0], pd.sk3Rnd[0], pd.sk3PadRnd[0],
+        pd.kGenErrRnd[0], pd.kGenErrPadRnd[0]
+    };
+    for (int i=0; i<vd.nDecSubvectors; i++) {
+        smlCommits.push_back(vd.decErrCom[i][0]);
+        smlRand.push_back(pd.decErrRnd[i][0]);
+        smlCommits.push_back(vd.decErrPadCom[i][0]);
+        smlRand.push_back(pd.decErrPadRnd[i][0]);
+    }
+    smlCommits.push_back(vd.yCom);
+    smlRand.push_back(pd.yRnd);
+    for (int i=0; i<scalarsPerElement(); i++) {
+        if (!checkLinCommit(vd.smlnsLinCnstr[i].terms, smlCommits, smlRand, witness, vd.ped))
+            return 1;
+    }}
+
+    // aggregate the constraints and flatten everything before proving
+    ReadyToProve rtp;
+    rtp.aggregateProver(pd);
+
+    // Make copies of the Merlin transcripts and specialize them
+    // for the final constraints before proving/verifying them
+    auto merLin = *vd.mer;
+    merLin.processConstraint("linear", rtp.linCnstr);
+
+    auto merQuad = *vd.mer;
+    merQuad.processConstraint("quadratic", rtp.quadCnstr);
+
+    // Flatten the statements, this relases the memory of the constraints
+    // (hence the Merlin processing above must be done before doing this).
+    rtp.flattenLinPrv(vd);
+    rtp.flattenQuadPrv(vd);
+
+    ReadyToVerify rtv = rtp; // a copy without the secret variables
+
+    // prove and verify the linear statement
+    auto merLinVer = merLin; // another copy for verification
+    DLPROOFS::LinPfTranscript pfL("Linear");
+    pfL.C = rtp.linCom;
+
+    // The actual proof
+    DLPROOFS::proveLinear(pfL, rtp.lComRnd, merLin, rtp.linWtns.data(),
+            rtp.linStmnt.data(), rtp.linGs.data(), rtp.linGs.size());
+    // The actual verification
+    if (!DLPROOFS::verifyLinear(pfL, rtv.linStmnt.data(), rtv.linGs.data(),
+                      rtv.linGs.size(), rtv.linCnstr.equalsTo, merLinVer))
+        return 1;
+
+    // prove and verify the quadratic statement
+    auto merQuadVer = merQuad; // another copy for verification
+    DLPROOFS::QuadPfTranscript pfQ("Quadratic");
+    pfQ.C = rtp.quadCom;
+     // The actual proof
+    DLPROOFS::proveQuadratic(pfQ, rtp.qComRnd, merQuad, rtp.quadGs.data(),
+                rtp.quadWtnsG.data(), rtp.quadHs.data(), rtp.quadWtnsH.data(),
+                rtp.quadGs.size());
+    // The actual verification
+    if (!DLPROOFS::verifyQuadratic(pfQ, rtv.quadGs.data(), rtv.quadHs.data(),
+                        rtp.quadGs.size(), rtv.quadCnstr.equalsTo, merQuadVer,
+                        rtv.offstG.data(), rtv.offstH.data()))
+        return 1;
+
     return 0;
 }
 
