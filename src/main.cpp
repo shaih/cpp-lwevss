@@ -28,7 +28,7 @@
 #include <cmath>
 #include <random>
 #include <chrono> 
-using namespace std::chrono; 
+using namespace std;
 
 #include <NTL/version.h>
 #include "regevEnc.hpp"
@@ -49,8 +49,15 @@ int main(int, char**) {
     //kp.sigmaKG=10; kp.sigmaEnc1=10; kp.sigmaEnc2=20;
     KeyParams kp(512);
     //kp.k=2048; kp.m=2048; kp.n=258;// make smaller dimension for debugging
+    kp.n = 256;
     GlobalKey gpk("testContext", kp);
     gpk.sigmaEnc2-=2;
+#ifdef DEBUGGING
+    std::cout << "{ kay:"<<gpk.kay <<", emm:"<<gpk.emm << ", enn:"<<gpk.enn << std::endl;
+    std::cout << "  sigmaKG:"<<gpk.sigmaKG<<", sigmaEnc1:"<<gpk.sigmaEnc1
+        << ", sigmaEnc2:"<<gpk.sigmaEnc2 << " }\n";
+#endif
+
     TernaryEMatrix::init();
     MerlinRegev mer;
     PedersenContext ped;
@@ -65,11 +72,16 @@ int main(int, char**) {
     std::vector<ALGEBRA::EVector> kgNoise(gpk.enn);
     std::vector<ALGEBRA::EVector> sk(gpk.enn);
     std::vector<ALGEBRA::EVector> pk(gpk.enn);
+    auto start = chrono::steady_clock::now();
     for (int i=0; i<gpk.enn; i++) {
         std::tie(sk[i],pk[i]) = gpk.genKeys(&kgNoise[i]);
         gpk.addPK(pk[i]);
     }
     gpk.setKeyHash();
+    auto end = chrono::steady_clock::now();
+    std::cout << gpk.enn << "keyGens in "
+        << chrono::duration_cast<chrono::milliseconds>(end - start).count()
+        << " milliseconds" << std::endl;
 
     // encryption
     std::vector<ALGEBRA::SVector> ptxt1(gpk.enn);
@@ -80,14 +92,29 @@ int main(int, char**) {
     for (int i=0; i<gpk.enn; i++) {
         resize(ptxt1[i], gpk.enn);
         for (int j=0; j<gpk.enn; j++) ptxt1[i][j] = sshr[i+1];
+    }
+    start = chrono::steady_clock::now();
+    for (int i=0; i<gpk.enn; i++) {
         ctxt1[i] = gpk.encrypt(ptxt1[i]);
     }
+    end = chrono::steady_clock::now();
+    std::cout << gpk.enn << "encryptions in "
+        << chrono::duration_cast<chrono::milliseconds>(end - start).count()
+        << " milliseconds" << std::endl;
 
     // decryption at party #1
     ALGEBRA::SVector ptxt2;    resize(ptxt2, gpk.tee);
     ALGEBRA::EVector decNoise; resize(decNoise, gpk.tee);
+    start = chrono::steady_clock::now();
     for (int i=0; i<gpk.tee; i++) { // decrypt 2nd entry in i'th ctxt
         ptxt2[i] = gpk.decrypt(sk[partyIdx], partyIdx, ctxt1[i], &(decNoise[i]));
+    }
+    end = chrono::steady_clock::now();
+    std::cout << gpk.tee << "decryptions in "
+        << chrono::duration_cast<chrono::milliseconds>(end - start).count()
+        << " milliseconds" << std::endl;
+
+    for (int i=0; i<gpk.tee; i++) { // decrypt 2nd entry in i'th ctxt
         if (ptxt2[i] != ptxt1[i][partyIdx])
             return false;
     }
@@ -111,20 +138,23 @@ int main(int, char**) {
         ctxtVec[i] = ctxt1[i].second[partyIdx];
     }
 
-    // prepare for proof, pad the secret key to exact norm and commit to it
+    // prepare for proof, commit to the secret key
     int origSize = sk[partyIdx].length(); 
     pd.sk1 = &(sk[partyIdx]);
-
-    // Commit separately to the original key and the padding, each one wrt
-    // both the G's and the Hs
     vd.sk1Com = commit(sk[partyIdx], vd.sk1Idx, vd.Gs, pd.sk1Rnd);
 
+    start = chrono::steady_clock::now();
     proveDecryption(pd, ptxt2, decNoise, ctxtMat, ctxtVec);
     proveEncryption(pd, ptxt3, encRnd, encNoise, ctxt2.first, ctxt2.second);
     proveKeyGen(pd, sk[partyIdx], kgNoise[partyIdx], partyIdx);
     proveReShare(pd, interval(1,gpk.tee+1));
     proveSmallness(pd);
+    end = chrono::steady_clock::now();
+    std::cout << gpk.enn << "preparing to prove and committing in "
+        << chrono::duration_cast<chrono::milliseconds>(end - start).count()
+        << " milliseconds" << std::endl;
 
+#if 0
     // Verify the commitments and constraints
     DLPROOFS::PtxtVec witness;
     pd.assembleFullWitness(witness);
@@ -229,8 +259,10 @@ int main(int, char**) {
         if (!checkLinCommit(vd.smlnsLinCnstr[i].terms, smlCommits, smlRand, witness, vd.ped))
             return 1;
     }}
+#endif
 
     // aggregate the constraints and flatten everything before proving
+    start = chrono::steady_clock::now();
     ReadyToProve rtp;
     rtp.aggregateProver(pd);
 
@@ -254,27 +286,51 @@ int main(int, char**) {
     DLPROOFS::LinPfTranscript pfL("Linear");
     pfL.C = rtp.linCom;
 
+    end = chrono::steady_clock::now();
+    std::cout << gpk.enn << "aggregating comstaints in "
+        << chrono::duration_cast<chrono::milliseconds>(end - start).count()
+        << " milliseconds" << std::endl;
+
     // The actual proof
+    start = chrono::steady_clock::now();
     DLPROOFS::proveLinear(pfL, rtp.lComRnd, merLin, rtp.linWtns.data(),
             rtp.linStmnt.data(), rtp.linGs.data(), rtp.linGs.size());
+    end = chrono::steady_clock::now();
+    std::cout << gpk.enn << "proving linear in "
+        << chrono::duration_cast<chrono::milliseconds>(end - start).count()
+        << " milliseconds" << std::endl;
+
     // The actual verification
+    start = chrono::steady_clock::now();
     if (!DLPROOFS::verifyLinear(pfL, rtv.linStmnt.data(), rtv.linGs.data(),
                       rtv.linGs.size(), rtv.linCnstr.equalsTo, merLinVer))
         return 1;
+    std::cout << gpk.enn << "verifying linear in "
+        << chrono::duration_cast<chrono::milliseconds>(end - start).count()
+        << " milliseconds" << std::endl;
 
     // prove and verify the quadratic statement
     auto merQuadVer = merQuad; // another copy for verification
     DLPROOFS::QuadPfTranscript pfQ("Quadratic");
     pfQ.C = rtp.quadCom;
      // The actual proof
+    start = chrono::steady_clock::now();
     DLPROOFS::proveQuadratic(pfQ, rtp.qComRnd, merQuad, rtp.quadGs.data(),
                 rtp.quadWtnsG.data(), rtp.quadHs.data(), rtp.quadWtnsH.data(),
                 rtp.quadGs.size());
+    std::cout << gpk.enn << "proving quadratic in "
+        << chrono::duration_cast<chrono::milliseconds>(end - start).count()
+        << " milliseconds" << std::endl;
+
     // The actual verification
+    start = chrono::steady_clock::now();
     if (!DLPROOFS::verifyQuadratic(pfQ, rtv.quadGs.data(), rtv.quadHs.data(),
                         rtp.quadGs.size(), rtv.quadCnstr.equalsTo, merQuadVer,
                         rtv.offstG.data(), rtv.offstH.data()))
         return 1;
+    std::cout << gpk.enn << "verifying quadratic in "
+        << chrono::duration_cast<chrono::milliseconds>(end - start).count()
+        << " milliseconds" << std::endl;
 
     return 0;
 }

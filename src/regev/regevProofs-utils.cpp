@@ -110,11 +110,6 @@ VerifierData::VerifierData(GlobalKey& g, PedersenContext& p,
     smlnsBits = 118;
     B_smallness = one<<smlnsBits;               // Make into a power of two
     //B_smallness = multDbl(sqrt(dimOver2), 896*B_decNoise);
-#ifdef DEBUGGING
-    std::cout << "{ k:"<<k <<", m:"<<m << ", n:"<<n << std::endl;
-    std::cout << "  sigmaKG:"<<g.sigmaKG<<", sigmaEnc1:"<<g.sigmaEnc1
-        << ", sigmaEnc2:"<<g.sigmaEnc2 << "}\n";
-#endif
 
     setIndexes(); // compute al the indexes into the G,H arrays
     computeGenerators();   // compute the generators themselves
