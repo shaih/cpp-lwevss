@@ -44,10 +44,12 @@ int main(int argc, char** argv) {
     // std::cout << "- Found Sodium version "<<SODIUM_VERSION_STRING<<std::endl;
 
     int nParties = 512;
-    if (argc > 1)
+    if (argc > 1) {
         nParties = std::stoi(argv[1]);
+    }
     if (nParties < 64 || nParties > 4096)
         nParties = 512;
+    std::cout << "nParties="<<nParties << std::endl;
 
     // The dimensions of the the CRX is k-by-m, but note that this is
     // a matrix over GF(p^2) so the lattice dimensions we get it twice
@@ -55,7 +57,7 @@ int main(int argc, char** argv) {
     //KeyParams kp;
     //kp.k=64; kp.m=64; kp.n=64;
     //kp.sigmaKG=10; kp.sigmaEnc1=10; kp.sigmaEnc2=20;
-    KeyParams kp(512);
+    KeyParams kp(nParties);
     //kp.k=2048; kp.m=2048; kp.n=258;// make smaller dimension for debugging
     //kp.n = 256;
     GlobalKey gpk("testContext", kp);
@@ -147,6 +149,7 @@ int main(int argc, char** argv) {
     }
 
     // prepare for proof, commit to the secret key
+    DLPROOFS::Point::counter = 0;
     int origSize = sk[partyIdx].length(); 
     pd.sk1 = &(sk[partyIdx]);
     vd.sk1Com = commit(sk[partyIdx], vd.sk1Idx, vd.Gs, pd.sk1Rnd);
@@ -159,7 +162,9 @@ int main(int argc, char** argv) {
     proveSmallness(pd);
     end = chrono::steady_clock::now();
     ticks = chrono::duration_cast<chrono::milliseconds>(end - start).count();
-    std::cout << "preparing to prove and committing in "<<ticks<< " milliseconds" << std::endl;
+    std::cout << "preparing to prove and committing in "<<ticks<< " milliseconds, "
+        << DLPROOFS::Point::counter << " exponentiations\n";
+    DLPROOFS::Point::counter = 0;
 
 #if 0
     // Verify the commitments and constraints
@@ -295,7 +300,9 @@ int main(int argc, char** argv) {
 
     end = chrono::steady_clock::now();
     ticks = chrono::duration_cast<chrono::milliseconds>(end - start).count();
-    std::cout << "aggregating comstaints in "<<ticks<< " milliseconds" << std::endl;
+    std::cout << "aggregating constaints in "<<ticks<< " milliseconds, "
+        << DLPROOFS::Point::counter << " exponentiations\n";
+    DLPROOFS::Point::counter = 0;
 
     // The actual proof
     start = chrono::steady_clock::now();
@@ -303,7 +310,9 @@ int main(int argc, char** argv) {
             rtp.linStmnt.data(), rtp.linGs.data(), rtp.linGs.size());
     end = chrono::steady_clock::now();
     ticks = chrono::duration_cast<chrono::milliseconds>(end - start).count();
-    std::cout << "proving linear in "<<ticks<< " milliseconds" << std::endl;
+    std::cout << "proving linear in "<<ticks<< " milliseconds, "
+        << DLPROOFS::Point::counter << " exponentiations\n";
+    DLPROOFS::Point::counter = 0;
 
     start = chrono::steady_clock::now();
     if (!DLPROOFS::verifyLinear(pfL, rtv.linStmnt.data(), rtv.linGs.data(),
@@ -311,7 +320,9 @@ int main(int argc, char** argv) {
         return 1;
     end = chrono::steady_clock::now();
     ticks = chrono::duration_cast<chrono::milliseconds>(end - start).count();
-    std::cout << "verifying linear in "<<ticks<< " milliseconds" << std::endl;
+    std::cout << "verifying linear in "<<ticks<< " milliseconds, "
+        << DLPROOFS::Point::counter << " exponentiations\n";
+    DLPROOFS::Point::counter = 0;
 
     // prove and verify the quadratic statement
     auto merQuadVer = merQuad; // another copy for verification
@@ -324,7 +335,9 @@ int main(int argc, char** argv) {
                 rtp.quadGs.size());
     end = chrono::steady_clock::now();
     ticks = chrono::duration_cast<chrono::milliseconds>(end - start).count();
-    std::cout << "proving quadratic in "<<ticks<< " milliseconds" << std::endl;
+    std::cout << "proving quadratic in "<<ticks<< " milliseconds, "
+        << DLPROOFS::Point::counter << " exponentiations\n";
+    DLPROOFS::Point::counter = 0;
 
     // The actual verification
     start = chrono::steady_clock::now();
@@ -334,7 +347,9 @@ int main(int argc, char** argv) {
         return 1;
     end = chrono::steady_clock::now();
     ticks = chrono::duration_cast<chrono::milliseconds>(end - start).count();
-    std::cout << "verifying quadratic in "<<ticks<< " milliseconds" << std::endl;
+    std::cout << "verifying quadratic in "<<ticks<< " milliseconds, "
+        << DLPROOFS::Point::counter << " exponentiations\n";
+    DLPROOFS::Point::counter = 0;
 
     return 0;
 }

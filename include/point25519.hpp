@@ -37,6 +37,7 @@ class Point {
     static Point init(); // Initialize libsodium and the constants
     static Point identityPoint, basePoint;
 public:
+    static size_t counter; // used for profiling and performance measurements
     unsigned char bytes[crypto_core_ed25519_BYTES];
 
     Point(){ *this = identityPoint; }
@@ -97,6 +98,7 @@ public:
             if (res != 0) {
                 throw std::runtime_error("failed to perform scalar multiplication, err#="+std::to_string(res));
             }
+            counter++; // count exponentiations
         }
         return *this;
     }
