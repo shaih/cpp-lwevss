@@ -47,21 +47,18 @@ int main(int argc, char** argv) {
     if (argc > 1) {
         nParties = std::stoi(argv[1]);
     }
-    if (nParties < 64 || nParties > 4096)
+    if (nParties < 32 || nParties > 4096)
         nParties = 512;
     std::cout << "nParties="<<nParties << std::endl;
 
     // The dimensions of the the CRX is k-by-m, but note that this is
     // a matrix over GF(p^2) so the lattice dimensions we get it twice
     // that
-    //KeyParams kp;
-    //kp.k=64; kp.m=64; kp.n=64;
-    //kp.sigmaKG=10; kp.sigmaEnc1=10; kp.sigmaEnc2=20;
     KeyParams kp(nParties);
-    //kp.k=2048; kp.m=2048; kp.n=258;// make smaller dimension for debugging
+    //kp.k=1024; kp.m=1024; kp.n=128;// make smaller dimension for debugging
     //kp.n = 256;
     GlobalKey gpk("testContext", kp);
-    gpk.sigmaEnc2-=2;
+    gpk.sigmaEnc2-=4;
 #ifdef DEBUGGING
     std::cout << "{ kay:"<<gpk.kay <<", emm:"<<gpk.emm << ", enn:"<<gpk.enn << std::endl;
     std::cout << "  sigmaKG:"<<gpk.sigmaKG<<", sigmaEnc1:"<<gpk.sigmaEnc1
@@ -78,7 +75,7 @@ int main(int argc, char** argv) {
     // Generate/verify the proofs by the second party (idx=1)
     int partyIdx = 1;
 
-    // Key generation for the five parties
+    // Key generation for the parties
     std::vector<ALGEBRA::EVector> kgNoise(gpk.enn);
     std::vector<ALGEBRA::EVector> sk(gpk.enn);
     std::vector<ALGEBRA::EVector> pk(gpk.enn);
@@ -99,18 +96,18 @@ int main(int argc, char** argv) {
     // secret sharing of a random value , the secret itself is sshr[0]
     ALGEBRA::SVector sshr;
     ssp.randomSharing(sshr);
-    for (int i=0; i<gpk.enn; i++) {
+    for (int i=0; i<gpk.tee; i++) {
         resize(ptxt1[i], gpk.enn);
         for (int j=0; j<gpk.enn; j++) ptxt1[i][j] = sshr[i+1];
     }
     start = chrono::steady_clock::now();
-    for (int i=0; i<gpk.enn; i++) {
+    for (int i=0; i<gpk.tee; i++) {
         ctxt1[i] = gpk.encrypt(ptxt1[i]);
     }
     end = chrono::steady_clock::now();
     ticks = chrono::duration_cast<chrono::milliseconds>(end - start).count();
-    std::cout << gpk.enn << " encryptions in "<<ticks<<" milliseconds, avg="
-        << (ticks/double(gpk.enn)) << std::endl;
+    std::cout << gpk.tee << " encryptions in "<<ticks<<" milliseconds, avg="
+        << (ticks/double(gpk.tee)) << std::endl;
 
     // decryption at party #1
     ALGEBRA::SVector ptxt2;    resize(ptxt2, gpk.tee);
@@ -126,7 +123,7 @@ int main(int argc, char** argv) {
 
     for (int i=0; i<gpk.tee; i++) { // decrypt 2nd entry in i'th ctxt
         if (ptxt2[i] != ptxt1[i][partyIdx])
-            return false;
+            std::cout << "decryption error in "<<i<<"th ciphertext\n";
     }
 
     // re-encryption at party #1
@@ -164,7 +161,6 @@ int main(int argc, char** argv) {
     ticks = chrono::duration_cast<chrono::milliseconds>(end - start).count();
     std::cout << "preparing to prove and committing in "<<ticks<< " milliseconds, "
         << DLPROOFS::Point::counter << " exponentiations\n";
-    DLPROOFS::Point::counter = 0;
 
 #if 0
     // Verify the commitments and constraints
@@ -274,6 +270,8 @@ int main(int argc, char** argv) {
 #endif
 
     // aggregate the constraints and flatten everything before proving
+    DLPROOFS::Point::counter = 0;
+    std::cout<<"aggregting constraints\n";
     start = chrono::steady_clock::now();
     ReadyToProve rtp;
     rtp.aggregateProver(pd);
@@ -288,6 +286,7 @@ int main(int argc, char** argv) {
 
     // Flatten the statements, this relases the memory of the constraints
     // (hence the Merlin processing above must be done before doing this).
+    std::cout<<"flatenning constraints\n";
     rtp.flattenLinPrv(vd);
     rtp.flattenQuadPrv(vd);
 
@@ -302,9 +301,9 @@ int main(int argc, char** argv) {
     ticks = chrono::duration_cast<chrono::milliseconds>(end - start).count();
     std::cout << "aggregating constaints in "<<ticks<< " milliseconds, "
         << DLPROOFS::Point::counter << " exponentiations\n";
-    DLPROOFS::Point::counter = 0;
 
     // The actual proof
+    DLPROOFS::Point::counter = 0;
     start = chrono::steady_clock::now();
     DLPROOFS::proveLinear(pfL, rtp.lComRnd, merLin, rtp.linWtns.data(),
             rtp.linStmnt.data(), rtp.linGs.data(), rtp.linGs.size());
@@ -312,19 +311,19 @@ int main(int argc, char** argv) {
     ticks = chrono::duration_cast<chrono::milliseconds>(end - start).count();
     std::cout << "proving linear in "<<ticks<< " milliseconds, "
         << DLPROOFS::Point::counter << " exponentiations\n";
-    DLPROOFS::Point::counter = 0;
 
+    DLPROOFS::Point::counter = 0;
     start = chrono::steady_clock::now();
     if (!DLPROOFS::verifyLinear(pfL, rtv.linStmnt.data(), rtv.linGs.data(),
                       rtv.linGs.size(), rtv.linCnstr.equalsTo, merLinVer))
-        return 1;
+        std::cout << "failed linear verification\n";
     end = chrono::steady_clock::now();
     ticks = chrono::duration_cast<chrono::milliseconds>(end - start).count();
     std::cout << "verifying linear in "<<ticks<< " milliseconds, "
         << DLPROOFS::Point::counter << " exponentiations\n";
-    DLPROOFS::Point::counter = 0;
 
     // prove and verify the quadratic statement
+    DLPROOFS::Point::counter = 0;
     auto merQuadVer = merQuad; // another copy for verification
     DLPROOFS::QuadPfTranscript pfQ("Quadratic");
     pfQ.C = rtp.quadCom;
@@ -337,14 +336,14 @@ int main(int argc, char** argv) {
     ticks = chrono::duration_cast<chrono::milliseconds>(end - start).count();
     std::cout << "proving quadratic in "<<ticks<< " milliseconds, "
         << DLPROOFS::Point::counter << " exponentiations\n";
-    DLPROOFS::Point::counter = 0;
 
     // The actual verification
+    DLPROOFS::Point::counter = 0;
     start = chrono::steady_clock::now();
     if (!DLPROOFS::verifyQuadratic(pfQ, rtv.quadGs.data(), rtv.quadHs.data(),
                         rtp.quadGs.size(), rtv.quadCnstr.equalsTo, merQuadVer,
                         rtv.offstG.data(), rtv.offstH.data()))
-        return 1;
+        std::cout << "failed quadratic verification\n";
     end = chrono::steady_clock::now();
     ticks = chrono::duration_cast<chrono::milliseconds>(end - start).count();
     std::cout << "verifying quadratic in "<<ticks<< " milliseconds, "

@@ -30,7 +30,7 @@ extern "C" {
 }
 using namespace ALGEBRA;
 
-#define DEBUGGING
+//#define DEBUGGING
 
 namespace REGEVENC {
 

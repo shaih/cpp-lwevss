@@ -21,7 +21,7 @@
  * ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
  * OTHER DEALINGS IN THE SOFTWARE.
  **/
-#define DEBUGGING
+//#define DEBUGGING
 #include <cassert>
 #include "utils.hpp"
 #include "regevProofs.hpp"

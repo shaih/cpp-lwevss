@@ -38,7 +38,7 @@
 #include "shamir.hpp"
 #include "bulletproof.hpp"
 
-#define DEBUGGING
+//#define DEBUGGING
 
 namespace REGEVENC {
 using CRV25519::Point, DLPROOFS::PedersenContext, TOOLS::SharingParams,
