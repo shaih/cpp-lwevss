@@ -23,6 +23,7 @@
  **/
 //#define DEBUGGING
 #include <cassert>
+#include <chrono>
 #include "utils.hpp"
 #include "regevProofs.hpp"
 #ifdef DEBUGGING
@@ -859,13 +860,21 @@ void ReadyToVerify::aggregateVerifier1(VerifierData& vd) {
 
 void ReadyToProve::aggregateProver(ProverData& pd)
 {
+    auto start = std::chrono::steady_clock::now();
+
     // Collect all the secret variables
     pd.assembleNormWitness(quadWitnessG); // all but sk1,pt1,pt2,y
     pd.assembleLinearWitness(linWitness);// only sk1,pt1,pt2,y
 
+    auto end = std::chrono::steady_clock::now();
+    auto ticks = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+
     // Reduce to a single quadratic and a single linear constraint
     VerifierData& vd = *pd.vd;
     aggregateVerifier1(vd);
+
+    auto startExp = DLPROOFS::Point::counter;
+    start = std::chrono::steady_clock::now();
 
     // The aggregate function implies modifying the secret variables
     // in the quadratic equations, and hence also the commitments and
@@ -982,11 +991,16 @@ void ReadyToProve::aggregateProver(ProverData& pd)
                                 hs.data(), wtH.data(), gs.size(), qComRnd));
     }
 #endif
+    end = std::chrono::steady_clock::now();
+    ticks += std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+    std::cout << "prover-only aggregation uses "
+        << (DLPROOFS::Point::counter - startExp) << " exponentiations, ";
 
     // enforce norm constraint and separate linear and quadratic variables
     aggregateVerifier2(vd);
 
     // release memory of intermediate vectors
+    start = std::chrono::steady_clock::now();
     rVec.clear(); uVec.clear(); as.clear(); bs.clear();
 
     // add the offsets deltaG, deltaH into quadWitnessG, quadWitnessH
@@ -1013,6 +1027,9 @@ void ReadyToProve::aggregateProver(ProverData& pd)
     assert(checkConstraint(quadCnstr, quadWitnessG, quadWitnessH));
     assert(checkConstraint(linCnstr, linWitness));
 #endif
+    end = std::chrono::steady_clock::now();
+    ticks += std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+    std::cout << ticks << " millseconds\n";
 }
 
 void ReadyToVerify::aggregateVerifier2(VerifierData& vd) {

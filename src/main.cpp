@@ -29,6 +29,8 @@
 #include <random>
 #include <chrono>
 #include <string>
+#include <sys/time.h>
+#include <sys/resource.h>
 using namespace std;
 
 #include <NTL/version.h>
@@ -55,15 +57,13 @@ int main(int argc, char** argv) {
     // a matrix over GF(p^2) so the lattice dimensions we get it twice
     // that
     KeyParams kp(nParties);
-    //kp.k=1024; kp.m=1024; kp.n=128;// make smaller dimension for debugging
+    kp.k=kp.m=5928; // adjust dimensions
     //kp.n = 256;
     GlobalKey gpk("testContext", kp);
     gpk.sigmaEnc2-=4;
-#ifdef DEBUGGING
     std::cout << "{ kay:"<<gpk.kay <<", emm:"<<gpk.emm << ", enn:"<<gpk.enn << std::endl;
     std::cout << "  sigmaKG:"<<gpk.sigmaKG<<", sigmaEnc1:"<<gpk.sigmaEnc1
         << ", sigmaEnc2:"<<gpk.sigmaEnc2 << " }\n";
-#endif
 
     TernaryEMatrix::init();
     MerlinRegev mer;
@@ -162,113 +162,6 @@ int main(int argc, char** argv) {
     std::cout << "preparing to prove and committing in "<<ticks<< " milliseconds, "
         << DLPROOFS::Point::counter << " exponentiations\n";
 
-#if 0
-    // Verify the commitments and constraints
-    DLPROOFS::PtxtVec witness;
-    pd.assembleFullWitness(witness);
-
-    for (auto& lncstr: vd.linConstr) {
-        if (!checkConstraintLoose(lncstr, witness))
-            return 1;
-    }
-    for (auto& qdcstr: vd.normConstr) {
-        if (!checkConstraintLoose(qdcstr, witness, witness))
-            return 1;
-    }
-
-    // Check the commitments against the quadratic constraints
-    for (int i=0; i<vd.nDecSubvectors; i++) {
-        if (!checkQuadCommit(vd.normConstr[i], vd.decErrCom[i], vd.decErrPadCom[i],
-                            pd.decErrRnd[i], pd.decErrPadRnd[i], witness, vd.ped))
-        return 1;
-    }
-    if (!checkQuadCommit(*vd.rQuadCnstr, vd.r2Com, vd.r2PadCom,
-                            pd.r2Rnd, pd.r2PadRnd, witness, vd.ped))
-        return 1;
-    if (!checkQuadCommit(*vd.encErrQuadCnstr, vd.encErrCom, vd.encErrPadCom,
-                            pd.encErrRnd, pd.encErrPadRnd, witness, vd.ped))
-        return 1;
-    if (!checkQuadCommit(*vd.skQuadCnstr, vd.sk3Com, vd.sk3PadCom,
-                            pd.sk3Rnd, pd.sk3PadRnd, witness, vd.ped))
-        return 1;
-    if (!checkQuadCommit(*vd.kgErrQuadCnstr, vd.kGenErrCom, vd.kGenErrPadCom,
-                            pd.kGenErrRnd, pd.kGenErrPadRnd, witness, vd.ped))
-        return 1;
-
-    // Check the commitments against the linear constraints
-
-    // Decryption commitments
-    {std::vector<Point> decCommits = {vd.pt1Com, vd.sk1Com};
-    std::vector<CRV25519::Scalar> decRand = {pd.pt1Rnd, pd.sk1Rnd};
-    for (int i=0; i<vd.nDecSubvectors; i++) {
-        decCommits.push_back(vd.decErrCom[i][0]);
-        decRand.push_back(pd.decErrRnd[i][0]);
-    }
-    for (int i=0; i<scalarsPerElement(); i++) {
-        if (!checkLinCommit(vd.decLinCnstr[i].terms, decCommits, decRand, witness, vd.ped))
-            return 1;
-    }}
-
-    // Encryption commitments
-    {std::vector<Point> encCommits = {vd.pt2Com, vd.rCom, vd.encErrCom[0]};
-    std::vector<CRV25519::Scalar> encRand = {pd.pt2Rnd, pd.rRnd, pd.encErrRnd[0]};
-    for (int i=0; i<scalarsPerElement(); i++) {
-        if (!checkLinCommit(vd.encLinCnstr[i].terms, encCommits, encRand, witness, vd.ped))
-            return 1;
-    }}
-    {std::vector<Point> encCommits2 = {vd.rCom, vd.r2Com[0]};
-    std::vector<CRV25519::Scalar> encRand2 = {pd.rRnd, pd.r2Rnd[0]};
-    for (int i=0; i<scalarsPerElement(); i++) {
-        if (!checkLinCommit(vd.encLinCnstr2[i].terms, encCommits2, encRand2, witness, vd.ped))
-            return 1;
-    }}
-
-    // Key-generation commitments
-    {std::vector<Point> kgCommits = {vd.sk2Com, vd.kGenErrCom[0]};
-    std::vector<CRV25519::Scalar> kgRand = {pd.sk2Rnd, pd.kGenErrRnd[0]};
-    for (int i=0; i<scalarsPerElement(); i++) {
-        if (!checkLinCommit(vd.kGenLinCnstr[i].terms, kgCommits, kgRand, witness, vd.ped))
-            return 1;
-    }}
-    {std::vector<Point> kgCommits2 = {vd.sk2Com, vd.sk3Com[0]};
-    std::vector<CRV25519::Scalar> kgRand2 = {pd.sk2Rnd, pd.sk3Rnd[0]};
-    for (int i=0; i<scalarsPerElement(); i++) {
-        if (!checkLinCommit(vd.kGenLinCnstr2[i].terms, kgCommits2, kgRand2, witness, vd.ped))
-            return 1;
-    }}
-
-    // Resharing commitments
-    {std::vector<Point> reshrCommits = {vd.pt1Com, vd.pt2Com};
-    std::vector<CRV25519::Scalar> reshrRand = {pd.pt1Rnd, pd.pt2Rnd};
-    for (int i=0; i < vd.gk->enn -vd.gk->tee +1; i++) {
-        if (!checkLinCommit(vd.reShrLinCnstr[i].terms,
-                               reshrCommits, reshrRand, witness, vd.ped))
-            return 1;
-    }}
-
-    // Smallness commitments
-    {std::vector<Point> smlCommits = {vd.r2Com[0], vd.r2PadCom[0],
-        vd.encErrCom[0], vd.encErrPadCom[0], vd.sk3Com[0], vd.sk3PadCom[0],
-        vd.kGenErrCom[0], vd.kGenErrPadCom[0]
-    };
-    std::vector<CRV25519::Scalar> smlRand = {pd.r2Rnd[0], pd.r2PadRnd[0],
-        pd.encErrRnd[0], pd.encErrPadRnd[0], pd.sk3Rnd[0], pd.sk3PadRnd[0],
-        pd.kGenErrRnd[0], pd.kGenErrPadRnd[0]
-    };
-    for (int i=0; i<vd.nDecSubvectors; i++) {
-        smlCommits.push_back(vd.decErrCom[i][0]);
-        smlRand.push_back(pd.decErrRnd[i][0]);
-        smlCommits.push_back(vd.decErrPadCom[i][0]);
-        smlRand.push_back(pd.decErrPadRnd[i][0]);
-    }
-    smlCommits.push_back(vd.yCom);
-    smlRand.push_back(pd.yRnd);
-    for (int i=0; i<scalarsPerElement(); i++) {
-        if (!checkLinCommit(vd.smlnsLinCnstr[i].terms, smlCommits, smlRand, witness, vd.ped))
-            return 1;
-    }}
-#endif
-
     // aggregate the constraints and flatten everything before proving
     DLPROOFS::Point::counter = 0;
     std::cout<<"aggregting constraints\n";
@@ -349,6 +242,10 @@ int main(int argc, char** argv) {
     std::cout << "verifying quadratic in "<<ticks<< " milliseconds, "
         << DLPROOFS::Point::counter << " exponentiations\n";
     DLPROOFS::Point::counter = 0;
+
+    struct rusage ru;
+    getrusage(RUSAGE_SELF, &ru);
+    std::cout << " max mem: " << ru.ru_maxrss << " kilobytes\n";
 
     return 0;
 }
