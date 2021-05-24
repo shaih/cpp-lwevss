@@ -58,9 +58,10 @@ int main(int argc, char** argv) {
     // that
     KeyParams kp(nParties);
     kp.k=kp.m=5928; // adjust dimensions
-    //kp.n = 256;
     GlobalKey gpk("testContext", kp);
-    gpk.sigmaEnc2-=4;
+    gpk.sigmaKG--;
+    gpk.sigmaEnc1--;
+    gpk.sigmaEnc2-=5;
     std::cout << "{ kay:"<<gpk.kay <<", emm:"<<gpk.emm << ", enn:"<<gpk.enn << std::endl;
     std::cout << "  sigmaKG:"<<gpk.sigmaKG<<", sigmaEnc1:"<<gpk.sigmaEnc1
         << ", sigmaEnc2:"<<gpk.sigmaEnc2 << " }\n";

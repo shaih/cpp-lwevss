@@ -96,7 +96,7 @@ VerifierData::VerifierData(GlobalKey& g, PedersenContext& p,
     BigInt A = one<<g.sigmaKG;
     BigInt B = one<<g.sigmaEnc2;
     BigInt C = one<<g.sigmaEnc1;
-    B_decNoise = NTL::SqrRoot(multDbl(5.6454, k*(k*A*A+n*B*B)+m*C))*4;
+    B_decNoise = NTL::SqrRoot(multDbl(6.0, k*(k*A*A+n*B*B)+m*C))*4;
 
     B_sk = NTL::to_ZZ(sqrt(448*k));     // bounds the secret-key size
     B_kGenNoise =multDbl(sqrt(46*m),A); // keygen noise
@@ -104,7 +104,7 @@ VerifierData::VerifierData(GlobalKey& g, PedersenContext& p,
     B_encRnd = NTL::to_ZZ(sqrt(448*m));  // bounds the enc randomness
     // the encryption noise bound: sqrt(0.36*(2^{2*s_e1}*k + 2^{2*s_e2}*n))
     B_encNoise = (one<<(2*g.sigmaEnc1))*k + (one<<(2*g.sigmaEnc2))*n;
-    B_encNoise = NTL::SqrRoot(46*B_encNoise);
+    B_encNoise = NTL::SqrRoot(49*B_encNoise);
 
     // The y shifted vector has l-infinity 3584*sqrt(dimOver2)*B_decNoise/4
     smlnsBits = 118;
