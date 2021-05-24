@@ -249,7 +249,9 @@ void proveEncryption(ProverData& pd, const ALGEBRA::SVector& ptxt,
 #endif
        if (normSquaredBigInt(pd.encErr) <= vd.B_encNoise * vd.B_encNoise
             && normSquaredBigInt(pd.r2) <= vd.B_encRnd * vd.B_encRnd) {
-             *(vd.mer) = merBkp;
+            *(vd.mer) = merBkp;
+            std::cout << "proveEncryption computed r', noise' in "
+                << nTrials << " trials\n";
             break;
         }
         // if r2 or noise2 is too large, update the commitment and try again
@@ -438,6 +440,8 @@ void proveKeyGen(ProverData& pd, const ALGEBRA::EVector& sk,
         if (normSquaredBigInt(pd.kGenErr) <= vd.B_kGenNoise * vd.B_kGenNoise
             && normSquaredBigInt(pd.sk3) <= vd.B_sk * vd.B_sk) {
             *(vd.mer) = merBkp;
+            std::cout << "proveKeyGen computed sk', noise' in "
+                << nTrials << " trials\n";
             break;
         }
         // if sk3 or noise2 are too large, update the commitment and try again
@@ -733,7 +737,7 @@ void proveSmallness(ProverData& pd) {
         merBkp.newTernaryEMatrix("Smallness", R, nRows, nCols);
         u = allSecrets * R;
         vd.z = u + pd.y;
-#if 0 //def DEBUGGING
+#if 0 //ifdef DEBUGGING
         std::cout << "smallness |secrets|_infty=2^"<<log2BI(lInftyNorm(allSecrets))
             << ", |secrets|^2=2^"<<log2BI(normSquaredBigInt(allSecrets))
             << " (dim=" << (allSecrets.length()*scalarsPerElement())
@@ -748,10 +752,8 @@ void proveSmallness(ProverData& pd) {
         BigInt zBound = (vd.B_smallness*LINYDIM)/(LINYDIM+1);// B_smallness*128/129
         BigInt uBound = zBound/LINYDIM;                      // B_smallness/129
         if (lInftyNorm(u) <= uBound && lInftyNorm(vd.z) <= zBound) {
-#ifdef DEBUGGING
-            std::cout << "smallness proofs succeeded after "<<nTrials<< " trials, "
-                << "uRetires="<< uRetries <<", zRetries="<<zRetries<< std::endl;
-#endif
+            std::cout << "proveSmallness computed u,z in "
+                << nTrials << " trials\n";
             *vd.mer = merBkp;
             break;
         }
