@@ -23,6 +23,7 @@
  * ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
  * OTHER DEALINGS IN THE SOFTWARE.
  **/
+#include <chrono> 
 #include <cstring>
 #include <stdexcept>
 extern "C" {
@@ -37,10 +38,10 @@ class Point {
     static Point init(); // Initialize libsodium and the constants
     static Point identityPoint, basePoint;
 public:
-    static size_t counter; // used for profiling and performance measurements
+    static size_t counter, timer; // used for profiling and performance measurements
     unsigned char bytes[crypto_core_ed25519_BYTES];
 
-    Point(){ *this = identityPoint; }
+    Point() { *this = identityPoint; }
 
     const unsigned char* dataBytes() const { return bytes; }
 
@@ -94,12 +95,16 @@ public:
         if (*this==identity() || n.isZero())
             *this = identity();
         else {
+            auto start = std::chrono::steady_clock::now();
             auto res = crypto_scalarmult_ed25519_noclamp(bytes, n.bytes, bytes);
             if (res != 0) {
                 throw std::runtime_error("failed to perform scalar multiplication, err#="+std::to_string(res));
             }
             counter++; // count exponentiations
+            auto end = std::chrono::steady_clock::now();
+            timer += std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
         }
+
         return *this;
     }
     Point operator*(const Scalar& s) const { return Point(*this).operator*=(s); }

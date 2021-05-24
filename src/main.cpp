@@ -147,6 +147,7 @@ int main(int argc, char** argv) {
 
     // prepare for proof, commit to the secret key
     DLPROOFS::Point::counter = 0;
+    DLPROOFS::Point::timer = 0;
     int origSize = sk[partyIdx].length(); 
     pd.sk1 = &(sk[partyIdx]);
     vd.sk1Com = commit(sk[partyIdx], vd.sk1Idx, vd.Gs, pd.sk1Rnd);
@@ -160,10 +161,12 @@ int main(int argc, char** argv) {
     end = chrono::steady_clock::now();
     ticks = chrono::duration_cast<chrono::milliseconds>(end - start).count();
     std::cout << "preparing to prove and committing in "<<ticks<< " milliseconds, "
-        << DLPROOFS::Point::counter << " exponentiations\n";
+        << DLPROOFS::Point::counter << " exponentiations in "
+        << ((500+DLPROOFS::Point::timer)/1000) << " milliseconds\n";
 
     // aggregate the constraints and flatten everything before proving
     DLPROOFS::Point::counter = 0;
+    DLPROOFS::Point::timer = 0;
     std::cout<<"aggregting constraints\n";
     start = chrono::steady_clock::now();
     ReadyToProve rtp;
@@ -193,19 +196,23 @@ int main(int argc, char** argv) {
     end = chrono::steady_clock::now();
     ticks = chrono::duration_cast<chrono::milliseconds>(end - start).count();
     std::cout << "aggregating constaints in "<<ticks<< " milliseconds, "
-        << DLPROOFS::Point::counter << " exponentiations\n";
+        << DLPROOFS::Point::counter << " exponentiations in "
+        << ((500+DLPROOFS::Point::timer)/1000) << " milliseconds\n";
 
     // The actual proof
     DLPROOFS::Point::counter = 0;
+    DLPROOFS::Point::timer = 0;
     start = chrono::steady_clock::now();
     DLPROOFS::proveLinear(pfL, rtp.lComRnd, merLin, rtp.linWtns.data(),
             rtp.linStmnt.data(), rtp.linGs.data(), rtp.linGs.size());
     end = chrono::steady_clock::now();
     ticks = chrono::duration_cast<chrono::milliseconds>(end - start).count();
     std::cout << "proving linear in "<<ticks<< " milliseconds, "
-        << DLPROOFS::Point::counter << " exponentiations\n";
+        << DLPROOFS::Point::counter << " exponentiations in "
+        << ((500+DLPROOFS::Point::timer)/1000) << " milliseconds\n";
 
     DLPROOFS::Point::counter = 0;
+    DLPROOFS::Point::timer = 0;
     start = chrono::steady_clock::now();
     if (!DLPROOFS::verifyLinear(pfL, rtv.linStmnt.data(), rtv.linGs.data(),
                       rtv.linGs.size(), rtv.linCnstr.equalsTo, merLinVer))
@@ -213,10 +220,12 @@ int main(int argc, char** argv) {
     end = chrono::steady_clock::now();
     ticks = chrono::duration_cast<chrono::milliseconds>(end - start).count();
     std::cout << "verifying linear in "<<ticks<< " milliseconds, "
-        << DLPROOFS::Point::counter << " exponentiations\n";
+        << ((500+DLPROOFS::Point::timer)/1000) << " exponentiations in "
+        << ((500+DLPROOFS::Point::timer)/1000) << " milliseconds\n";
 
     // prove and verify the quadratic statement
     DLPROOFS::Point::counter = 0;
+    DLPROOFS::Point::timer = 0;
     auto merQuadVer = merQuad; // another copy for verification
     DLPROOFS::QuadPfTranscript pfQ("Quadratic");
     pfQ.C = rtp.quadCom;
@@ -228,10 +237,12 @@ int main(int argc, char** argv) {
     end = chrono::steady_clock::now();
     ticks = chrono::duration_cast<chrono::milliseconds>(end - start).count();
     std::cout << "proving quadratic in "<<ticks<< " milliseconds, "
-        << DLPROOFS::Point::counter << " exponentiations\n";
+        << DLPROOFS::Point::counter << " exponentiations in "
+        << ((500+DLPROOFS::Point::timer)/1000) << " milliseconds\n";
 
     // The actual verification
     DLPROOFS::Point::counter = 0;
+    DLPROOFS::Point::timer = 0;
     start = chrono::steady_clock::now();
     if (!DLPROOFS::verifyQuadratic(pfQ, rtv.quadGs.data(), rtv.quadHs.data(),
                         rtp.quadGs.size(), rtv.quadCnstr.equalsTo, merQuadVer,
@@ -240,8 +251,8 @@ int main(int argc, char** argv) {
     end = chrono::steady_clock::now();
     ticks = chrono::duration_cast<chrono::milliseconds>(end - start).count();
     std::cout << "verifying quadratic in "<<ticks<< " milliseconds, "
-        << DLPROOFS::Point::counter << " exponentiations\n";
-    DLPROOFS::Point::counter = 0;
+        << DLPROOFS::Point::counter << " exponentiations in "
+        << ((500+DLPROOFS::Point::timer)/1000) << " milliseconds\n";
 
     struct rusage ru;
     getrusage(RUSAGE_SELF, &ru);

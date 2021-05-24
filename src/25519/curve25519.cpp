@@ -31,6 +31,7 @@
 namespace CRV25519 {
 
 size_t Point::counter = 0;
+size_t Point::timer = 0;
 Point Point::basePoint;
 Point Point::identityPoint = Point::init(); // forcing a run of the init function
 
