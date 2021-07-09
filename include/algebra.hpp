@@ -77,6 +77,9 @@ inline EMatrix& resize(EMatrix& mat, size_t n, size_t m) {
     mat.SetDims(n,m); return mat;
 }
 
+inline BigInt square(const BigInt& x) {return NTL::sqr(x);}
+inline BigInt sqrt(const BigInt& x) {return NTL::SqrRoot(x);}
+
 // returns the smallest ell such that 2^{ell} >= n
 inline size_t log2roundUp(const BigInt& n) {
     if (NTL::IsZero(n)) return 0;
@@ -202,7 +205,10 @@ inline void initRandomness(const std::string& st) {
     NTL::SetSeed((unsigned char*)st.data(), st.length());
 }
 
-// Debugging helpers
+// Break a vector v over GF(p^ell) (with coefficients in [+-P/2]) into
+// two "digit" vectors hi,lo, where lo = (v mod radix) \in [+-radix/2]
+// and hi = (v-lo)/radix.
+void breakTwoDigits(EVector& hi, EVector& lo, const EVector& v, const BigInt& radix);
 
 inline BigInt balanced(const Scalar& s) {
     static auto Pover2 = NTL::ZZ_p::modulus()/2;

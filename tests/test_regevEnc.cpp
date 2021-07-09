@@ -38,20 +38,13 @@ static bool test_decode() {
 bool test_params()
 {
     KeyParams kp(256);
-    /*std::cout << "n:"<< kp.n
-        << ", k:" << kp.k
-        << ", m:" << kp.m
-        << ", s_kg:" << kp.sigmaKG
-        << ", s_e1:" << kp.sigmaEnc1
-        << ", s_e2:" << kp.sigmaEnc2 << std::endl;*/
-    return (kp.n==512 && kp.k==6300 && kp.m==6263 &&
-            kp.sigmaKG==86 && kp.sigmaEnc1==87 && kp.sigmaEnc2==97);
+    return (kp.n==256 && kp.k==2944 && kp.sigmaEnc1==97 && kp.sigmaEnc2==116);
 }
 
 static bool test_Regev() {
     KeyParams kp;
-    kp.k=64; kp.m=64; kp.n=64;
-    kp.sigmaKG=10; kp.sigmaEnc1=10; kp.sigmaEnc2=20;
+    kp.k=64; kp.n=64;
+    kp.sigmaEnc1=10; kp.sigmaEnc2=20;
     GlobalKey gpk("testContext",kp);
     ALGEBRA::EVector noise1;
     auto [sk1,pk1] = gpk.genKeys(&noise1);

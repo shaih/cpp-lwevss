@@ -29,20 +29,10 @@
 
 #include "algebra.hpp"
 
+#define DEBUGGING
+
 namespace REGEVENC {
-
-struct KeyParams {
-    // By what factor does the encryption noise "flood" the keygen noise
-    static constexpr int delta=8;
-    // ratio |y|/|u| in the l-infty proof of smallness
-    static constexpr int extra=128;
-
-    int k,m,n;
-    int sigmaKG, sigmaEnc1, sigmaEnc2;
-
-    KeyParams() = default;
-    explicit KeyParams(int _n);
-};
+struct KeyParams;
 
 // The global key for our Regev encrypiton includes the variour params,
 // the CRS k-by-m matrix A over and the ell*enn-by-emm matrix B with enn
@@ -60,20 +50,22 @@ public:
     static const ALGEBRA::Element& g() { return gElement; }
 
     // Some parameters are hard-wired, others are set at runtime
-    static constexpr int ell=2;    // redundancy parameter, # dimensions per party
-    static constexpr int skSize=2;     // secret key entries in [+-(2^{skSize}-1)]
-    static constexpr int rho=2;        // encryption randomness in [+-(2^{rho}-1)]
+    static constexpr int pSize=252;    // number of bits in P
+    static constexpr int ell=2; // redundancy parameter, # dimensions per party
+    static constexpr int rho=2; // secre-key, encryption randomness in [+-(2^{rho}-1)]
 
     std::string tag; // a string to tag this public key
 
     int enn;  // # of parties
-    int tee;  // threshold, one more than # of corrupted
-    int kay;  // dimension of LWE-secret (over GF(P^ell))
-    int emm;  // #-of-columns in the CRS (over GF(P^ell))
-
-    int sigmaKG=85;   // keygen noise in [+-(2^{sigmaKG}-1)]
-    int sigmaEnc1=86; // encryption small noise in [+-(2^{sigmaEnc1}-1)]
-    int sigmaEnc2=96; // encryption large noise in [+-(2^{sigmaEnc2}-1)]
+    int tee;  // threshold, one more than # of corrupted, < enn/2
+    int kay;  // dimension of LWE-secrets (over GF(P^ell))
+#ifndef DEBUGGING
+    int sigmaEnc1=93; // keygen, encryption small noise in [+-(2^{sigmaEnc1}-1)]
+    int sigmaEnc2=113; // encryption large noise in [+-(2^{sigmaEnc2}-1)]
+#else
+    int sigmaEnc1=3; // keygen, encryption small noise in [+-(2^{sigmaEnc1}-1)]
+    int sigmaEnc2=13; // encryption large noise in [+-(2^{sigmaEnc2}-1)]
+#endif // ifndef DEBUGGING
 
     size_t nPks; // number of GF(P^ell) public keys that are stored in B
     ALGEBRA::EMatrix A, B; // The matrix M = (A / B)
@@ -113,19 +105,21 @@ public:
 
     // Implementation of encryption, ctx1=CRS x r +e1, ctxt2=PK x r +e2 +g*x
     void internalEncrypt(ALGEBRA::EVector& ctxt1, ALGEBRA::EVector& ctxt2,
-        const ALGEBRA::SVector& ptxt, ALGEBRA::EVector& r, ALGEBRA::EVector& e) const;
+        const ALGEBRA::SVector& ptxt, ALGEBRA::EVector& r,
+        ALGEBRA::EVector& e1, ALGEBRA::EVector& e2) const;
 
     // Encrypt a vector of plaintext scalars, return ct0,ct1 and optionally
     // also the randomness and noise that were used in encryption
     typedef std::pair< ALGEBRA::EVector, ALGEBRA::EVector > CtxtPair;
     CtxtPair encrypt(const ALGEBRA::SVector& ptxt,
-                     ALGEBRA::EVector& r, ALGEBRA::EVector& e) const {
+                     ALGEBRA::EVector& r, CtxtPair& e) const {
         CtxtPair ct;
-        internalEncrypt(ct.first, ct.second, ptxt, r, e);
+        internalEncrypt(ct.first, ct.second, ptxt, r, e.first, e.second);
         return ct;
     }
     CtxtPair encrypt(const ALGEBRA::SVector& ptxt) const {
-        ALGEBRA::EVector r, e;
+        ALGEBRA::EVector r;
+        CtxtPair e;
         return encrypt(ptxt, r, e);
     }
 
@@ -143,13 +137,13 @@ public:
     // This function gets the idx of this specific secret key in the
     // global key, and it decrypts the relevant part of the ciphertext.
     ALGEBRA::Scalar decrypt(const ALGEBRA::EVector& sk, int idx,
-                const CtxtPair& ctxt, ALGEBRA::Element* n=nullptr) {
+                const CtxtPair& ctxt, ALGEBRA::Element* noise=nullptr) {
         ALGEBRA::Scalar pt;
-        if (n != nullptr)
-            internalDecrypt(pt, *n, sk, idx, ctxt.first, ctxt.second);
+        if (noise != nullptr)
+            internalDecrypt(pt, *noise, sk, idx, ctxt.first, ctxt.second);
         else {
-            ALGEBRA::Element noise;
-            internalDecrypt(pt, noise, sk, idx, ctxt.first, ctxt.second);
+            ALGEBRA::Element noise2;
+            internalDecrypt(pt, noise2, sk, idx, ctxt.first, ctxt.second);
         }
         return pt;
     }
@@ -228,6 +222,18 @@ public:
     ALGEBRA::Element randomize() const { 
         ALGEBRA::Element e;
         return randomize(e);
+    }
+};
+
+struct KeyParams {
+    int n; // number of parties
+    int k; // dimension of the LWE secret (as a vector over GF(P^ell))
+    int sigmaEnc1, sigmaEnc2; // size of noise vectors
+
+    void setParams();
+    explicit KeyParams(int _n=128) {
+        n=_n;
+        setParams();
     }
 };
 

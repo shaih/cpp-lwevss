@@ -132,7 +132,8 @@ int main(int argc, char** argv) {
     resize(ptxt3, gpk.enn);
     for (int j=0; j<gpk.enn; j++) ptxt3[j] = sshr[j+1];
     ALGEBRA::EVector encRnd;
-    ALGEBRA::EVector encNoise;
+    REGEVENC::GlobalKey::CtxtPair encNoise;
+
     auto ctxt2 = gpk.encrypt(ptxt3, encRnd, encNoise);
 
     // Copy the first t ciphertexts into a k x t matrix and another t-vector
@@ -150,15 +151,15 @@ int main(int argc, char** argv) {
     DLPROOFS::Point::counter = 0;
     DLPROOFS::Point::timer = 0;
     int origSize = sk[partyIdx].length(); 
-    pd.sk1 = &(sk[partyIdx]);
+    //pd.sk1 = &(sk[partyIdx]);
     vd.sk1Com = commit(sk[partyIdx], vd.sk1Idx, vd.Gs, pd.sk1Rnd);
 
     start = chrono::steady_clock::now();
-    proveDecryption(pd, ptxt2, decNoise, ctxtMat, ctxtVec);
+/*    proveDecryption(pd, ptxt2, decNoise, ctxtMat, ctxtVec);
     proveEncryption(pd, ptxt3, encRnd, encNoise, ctxt2.first, ctxt2.second);
     proveKeyGen(pd, sk[partyIdx], kgNoise[partyIdx], partyIdx);
     proveReShare(pd, interval(1,gpk.tee+1));
-    proveSmallness(pd);
+*/    proveSmallness(pd);
     end = chrono::steady_clock::now();
     ticks = chrono::duration_cast<chrono::milliseconds>(end - start).count();
     std::cout << "preparing to prove and committing in "<<ticks<< " milliseconds, "
@@ -184,8 +185,8 @@ int main(int argc, char** argv) {
     // Flatten the statements, this relases the memory of the constraints
     // (hence the Merlin processing above must be done before doing this).
     std::cout<<"flatenning constraints\n";
-    rtp.flattenLinPrv(vd);
-    rtp.flattenQuadPrv(vd);
+    rtp.flattenLinPrv(pd);
+    rtp.flattenQuadPrv(pd);
 
     ReadyToVerify rtv = rtp; // a copy without the secret variables
 
@@ -221,7 +222,7 @@ int main(int argc, char** argv) {
     end = chrono::steady_clock::now();
     ticks = chrono::duration_cast<chrono::milliseconds>(end - start).count();
     std::cout << "verifying linear in "<<ticks<< " milliseconds, "
-        << ((500+DLPROOFS::Point::timer)/1000) << " exponentiations in "
+        << DLPROOFS::Point::counter << " exponentiations in "
         << ((500+DLPROOFS::Point::timer)/1000) << " milliseconds\n";
 
     // prove and verify the quadratic statement

@@ -37,7 +37,7 @@ typedef std::set<int> EvalSet; // the set of evaluation points
 // in the constror
 struct SharingParams {
     int thr; // the threshold (= polynomial degree plus one)
-    EvalSet evalPoints;  // The set of n evaluation points
+    EvalSet evalPoints;  // The set of all n evaluation points
 
     SMatrix H;  // The parity-check matrix H
     // Considering a vector x representing the evluations at all the
@@ -49,6 +49,8 @@ struct SharingParams {
     int n() const { return evalPoints.size(); }
 
     void computeKernel(); // compute the parity-check matrix H
+    // H depends only on the set of all n evaluation points, not
+    // on the specific t-subset chosen for reconstruction every time
 
     SharingParams() = default;
     SharingParams(const EvalSet& ev, int t): evalPoints(ev), thr(t)
@@ -69,6 +71,7 @@ struct SharingParams {
     SVector lagrangeCoeffs(const EvalSet& recSet) const;
 
     // Recover the secret from its sharing at the given reconstruction set
+    // Note that the reconstruction set is a proper subset of evalPoints.
     Scalar getSecret(const SVector& sharing, const EvalSet& recSet);
 };
 

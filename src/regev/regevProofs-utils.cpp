@@ -21,13 +21,14 @@
  * ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
  * OTHER DEALINGS IN THE SOFTWARE.
  **/
+#include <cmath>
 #include <cassert>
 #include <numeric>
 #include "algebra.hpp"
 #include "regevProofs.hpp"
 
 namespace ALGEBRA {
-// Compute the norm-squared of v as a bigInt (not modular reduction)
+// Compute the norm-squared of v as a bigInt (no modular reduction)
 BigInt normSquaredBI(BIVector& vv) {
     // map integers to the range [-P/2,P/2]
     const BigInt POver2 = REGEVENC::GlobalKey::P() / 2;
@@ -56,6 +57,7 @@ BigInt normSquaredBigInt(const EVector& v) {
     ALGEBRA::conv(vv, v); // convert from GF(p^e) to integers
     return normSquaredBI(vv);
 }
+// Compute the infinity norm of v
 BigInt lInftyNorm(const EVector& v) {
     BigInt ret = NTL::ZZ::zero();
     for (int i=0; i<v.length(); i++) {
@@ -67,6 +69,37 @@ BigInt lInftyNorm(const EVector& v) {
     }
     return ret;
 }
+
+// Break a mod-P vector v (considered in [+-P/2]) into two "digit" vector
+// hi,lo, where lo \in [+-radix/2] and hi = (v-lo)/radix.
+void breakTwoDigits(EVector& hi, EVector& lo, const EVector& v, const BigInt& radix) {
+    resize(hi, v.length());
+    resize(lo, v.length());
+    // initialize scratch working space
+    SVector sHi; resize(sHi, scalarsPerElement());
+    SVector sLo; resize(sLo, scalarsPerElement());
+    BigInt half = radix/2;
+    for (int i=0; i<v.length(); i++) {
+        BIVector vi = balanced(v[i]); // convert to an ell-vector of BigInts
+        for (int j=0; j<scalarsPerElement(); j++) {
+            BigInt lo_ij = vi[j] % radix;
+            BigInt hi_ij = (vi[j]-lo_ij) / radix;
+            if (lo_ij > half) {
+                lo_ij -= radix;
+                hi_ij++;
+            }
+            else if (lo_ij < -half) {
+                lo_ij += radix;
+                hi_ij--;
+            }
+            conv(sLo[j], lo_ij);
+            conv(sHi[j], hi_ij);
+        }
+        conv(lo[i], sLo);
+        conv(hi[i], sHi);
+    }
+}
+
 } // end of ALGEBRA namespace
 
 using namespace ALGEBRA;
@@ -83,129 +116,134 @@ VerifierData::VerifierData(GlobalKey& g, PedersenContext& p,
     sp = (SharingParams*) &_sp;
 
     // The params k,m,n in scalars (rather than GF(p^ell) elements)
-    int k = g.kay*g.ell;
-    int m = g.emm*g.ell;
-    int n = g.enn*g.ell;
+    int kk = g.kay*g.ell;
+    int nn = g.enn*g.ell;
 
-    // A bound on the l2 norm of the decryption sub-vectors, which
-    // is four times the l-infinity noise bound for decryption.
-    // NOTE: Persumably that's a probability-one bound, we can get a
-    // somewhat better high-probability bound if we are willing to deal
-    // with low-probability failures
-    BigInt one(1);
-    BigInt A = one<<g.sigmaKG;
-    BigInt B = one<<g.sigmaEnc2;
-    BigInt C = one<<g.sigmaEnc1;
-    B_decNoise = NTL::SqrRoot(multDbl(6.0, k*(k*A*A+n*B*B)+m*C))*4;
+    // Set the values of the various bounds on the compressed vectors
 
-    B_sk = NTL::to_ZZ(sqrt(448*k));     // bounds the secret-key size
-    B_kGenNoise =multDbl(sqrt(46*m),A); // keygen noise
+    BigInt sig_kg = BigInt(1)<<g.sigmaEnc1; // "small" noise size
+    BigInt sig_e2 = BigInt(1)<<g.sigmaEnc2; // "large" noise size
 
-    B_encRnd = NTL::to_ZZ(sqrt(448*m));  // bounds the enc randomness
-    // the encryption noise bound: sqrt(0.36*(2^{2*s_e1}*k + 2^{2*s_e2}*n))
-    B_encNoise = (one<<(2*g.sigmaEnc1))*k + (one<<(2*g.sigmaEnc2))*n;
-    B_encNoise = NTL::SqrRoot(49*B_encNoise);
+    // A bound on the l-infty norm of the compressed sk and enc randomness:
+    // These vectors bounded in l2 norm by 2*sqrt(kk), so the compressed
+    // vector is bounded by sqrt(337) * 2*sqrt(kk)
+    B_r = B_sk = BigInt((long)ceil(2*sqrt(337*kk)));
 
-    // The y shifted vector has l-infinity 3584*sqrt(dimOver2)*B_decNoise/4
-    smlnsBits = 118;
-    B_smallness = one<<smlnsBits;               // Make into a power of two
-    //B_smallness = multDbl(sqrt(dimOver2), 896*B_decNoise);
+    // A bound on the l-infty norm of the compressed "small" noise vectors:
+    // The small noise is bounded in l2 by sig_kg*sqrt(kk/2), so the compressed
+    // vector is bounded by sqrt(337) * sig_kk*sqrt(kk/2)
+    B_eNoise1 = B_kNoise = multDbl(sqrt(kk*337/2.0), sig_kg);
+
+    // A bound on the l-infty norm of the compressed "large" noise vector
+    B_eNoise2 = multDbl(sqrt(kk*337/2.0), sig_e2);
+
+    // A bound on the l-infty norm of the compressed decryption noise:
+    // The decryption noise itself, for an honest party, is bounded in
+    // l2 norm by 1.7*sig_e2*nn + 24*sig_kg*sqrt(kk*nn). The compressed
+    // vector, therefore, is bound in l2 norm whp by:
+    //     sqrt(337) * (1.7*sig_e2*nn + 24*sig_kg*sqrt(kk*nn)).
+    B_dNoise = multDbl(sqrt(337)*1.7, sig_e2*nn) + multDbl(sqrt(kk*nn*377), 24*sig_kg);
+
+    // sanity-check, we should have B_sk < B_eNoise1 < B_eNoise2 < B_dNoise
+    if (B_sk >= B_eNoise1 || B_eNoise1 >= B_eNoise2 || B_eNoise2 >= B_dNoise) {
+        throw std::runtime_error("VerifierData: must have B_sk < B_eNoise1 < B_eNoise2 < B_dNoise");
+    }
+
+    // We are splitting these compressed noise vectors into two digits,
+    // all using a radix which is 2*sqrt(e1Noise)/sqrt(256)
+    int radixBits = ceil(log2BI(B_kNoise)/2) -3;
+    radix = BigInt(1) << radixBits;
+
+    // The l-infinity of the compressed vectors/digits is bounded by
+    // B_dNoise/radix, and concatenating all of them has dimension
+    // d=10*(JLDIM+PAD_SIZE) so the y offset vector has l-infinity
+    // bounded by B_dNoise/radix * 9.75*129*sqrt(d)
+    int d = 10*(JLDIM+PAD_SIZE);
+    smlnsBits = ceil(log2(9.75*129*sqrt(d))+log2BI(B_dNoise)-radixBits);
+
+    // The smallness bound is 128/129 * yBound
+    B_smallness = multDbl(128.0/129.0, BigInt(1)<<smlnsBits);
 
     setIndexes(); // compute al the indexes into the G,H arrays
     computeGenerators();   // compute the generators themselves
 
-    // Allocate empty constraints. For decryption and approximate smallness
-    // we have one linear constraints over GF(p^ell)), and for encryption
-    // and key generation we have two. In addition, we have n+1-t linear
-    // constraints over Z_p for the proof of correct re-sharing.
-    linConstr.resize(6*scalarsPerElement() + g.enn-g.tee+1);
-    decLinCnstr  = &(linConstr[0]);
-    encLinCnstr  = &(linConstr[scalarsPerElement()]);
-    encLinCnstr2 = &(linConstr[2*scalarsPerElement()]);
-    kGenLinCnstr = &(linConstr[3*scalarsPerElement()]);
-    kGenLinCnstr2= &(linConstr[4*scalarsPerElement()]);
-    smlnsLinCnstr= &(linConstr[5*scalarsPerElement()]);
-    reShrLinCnstr= &(linConstr[6*scalarsPerElement()]);
+    // Allocate empty linear constraints:
+    // - 1*ell for decryption and approximate smallness
+    // - 3*ell for encryption
+    // - 2*ell for keygen
+    // - n+1-t for the proof of correct re-sharing
+    linConstr.resize(7*scalarsPerElement() + g.enn-g.tee+1);
 
-    // Then we have nDecSubvectors norm constraints for the subvectors of
-    // the decryption noise, and one more norm constraint for each of the
-    // encryption randomness, the encrypiton noise, the new secret-key, and
-    // the key-generation noise. (Note that the norm constraint for the old
-    // secret key was included with the proof of the previous step.)
-    normConstr.resize(nDecSubvectors +4);
-    rQuadCnstr = &(normConstr[nDecSubvectors]);
-    encErrQuadCnstr = &(normConstr[nDecSubvectors+1]);
-    skQuadCnstr= &(normConstr[nDecSubvectors+2]);
-    kgErrQuadCnstr = &(normConstr[nDecSubvectors+3]);
-
-    // dec noise will be broken into nDecSubvectors pieces, for each peice
-    // we will commit separately to the noise itself and to the padding,
-    // and each of these will be committed twice, wrt the Gs and te Hs.
-
-    decErrCom.resize(nDecSubvectors); // each entry holds two commitments
-    decErrPadCom.resize(nDecSubvectors);
+    // We also have 10 norm constraints:
+    // - 2 for decryption
+    // - 5 for encryption
+    // - 3 for keygen
+    // Note that the norm constraint for the old secret key was
+    // included with the proof of the previous step.
+    normConstr.resize(10);
 }
 
-// Compute the indexes of the first scalar in the (representation
-// of) the various vectors. These indexes will be used to refer
-// to all the variables in the linear and nor constraints.
+// Compute the indexes of the first scalar in the representation of
+// the various vectors. These indexes will be used to refer to all
+// the variables in the linear and nor constraints.
 void VerifierData::setIndexes() {
     // How many subvectors do we have for the decryption randomness
-    assert((gk->tee*gk->ell) % DEC_ERRV_SZ == 0);
-    nDecSubvectors = (gk->tee*gk->ell) / DEC_ERRV_SZ;
 
     // number of scalar variables representing each of the vectors
-    int pt1Len, skLen, decErrLen, // decryption
-        pt2Len, rLen, r2Len, encErrLen,  // encryption
-        sk3Len, kGenErrLen, decErrPadLen;// key generation and padding
-
-    // the len variables denote the total number of scalars it takes to
-    // represent each vector. Most of these vectors are over GF(P^ell),
-    // except the plaintext and y vectors that are vectors of scalars.
-
-    skLen = gk->kay * gk->ell;
-    decErrLen = gk->tee * gk->ell; // = DEC_ERRV_SZ * nDecSubvectors
-    rLen = gk->emm * gk->ell;
-    encErrLen = kGenErrLen = r2Len = sk3Len = JLDIM;
-    pt1Len = gk->tee;
-    pt2Len = gk->enn;
-    decErrPadLen = PAD_SIZE * nDecSubvectors;
+    int pt1Len = gk->tee;
+    int skLen = gk->kay * gk->ell;
+    int pt2Len = gk->enn;
+    int rLen = gk->kay * gk->ell;
 
     // The indexes, the quadratic variables first
-    decErrIdx    = 0;
-    decErrPadIdx = decErrIdx + decErrLen;
-    r2Idx        = decErrPadIdx + decErrPadLen;
-    r2PadIdx     = r2Idx + r2Len;
-    encErrIdx    = r2PadIdx + PAD_SIZE;
-    encErrPadIdx = encErrIdx + encErrLen;
-    sk3Idx       = encErrPadIdx + PAD_SIZE;
-    sk3PadIdx    = sk3Idx + sk3Len;
-    kGenErrIdx   = sk3PadIdx + PAD_SIZE;
-    kGenErrPadIdx= kGenErrIdx + kGenErrLen;
-    pt1Idx       = kGenErrPadIdx + PAD_SIZE;
-    pt2Idx       = pt1Idx + pt1Len;
-    sk1Idx       = pt2Idx + pt2Len;
-    sk2Idx       = sk1Idx + skLen;
-    rIdx         = sk2Idx + skLen;
-    yIdx         = rIdx + rLen;
-    wIdx         = yIdx + LINYDIM;
+    dCompHiIdx = 0;
+    dPadHiIdx  = dCompHiIdx + JLDIM;
+    dCompLoIdx = dPadHiIdx  + PAD_SIZE;
+    dPadLoIdx  = dCompLoIdx + JLDIM;
+    rCompIdx   = dPadLoIdx  + PAD_SIZE;
+    rPadIdx    = rCompIdx   + JLDIM;
+    eComp1HiIdx= rPadIdx    + PAD_SIZE;
+    ePad1HiIdx = eComp1HiIdx+ JLDIM;
+    eComp1LoIdx= ePad1HiIdx + PAD_SIZE;
+    ePad1LoIdx = eComp1LoIdx+ JLDIM;
+    eComp2HiIdx= ePad1LoIdx + PAD_SIZE;
+    ePad2HiIdx = eComp2HiIdx+ JLDIM;
+    eComp2LoIdx= ePad2HiIdx + PAD_SIZE;
+    ePad2LoIdx = eComp2LoIdx+ JLDIM;
+    sk2CompIdx = ePad2LoIdx + PAD_SIZE;
+    sk2PadIdx  = sk2CompIdx + JLDIM;
+    kCompHiIdx = sk2PadIdx  + PAD_SIZE;
+    kPadHiIdx  = kCompHiIdx + JLDIM;
+    kCompLoIdx = kPadHiIdx  + PAD_SIZE;
+    kPadLoIdx  = kCompLoIdx + JLDIM;
+
+    // Then the linear-only variables        
+    sk1Idx = kPadLoIdx + PAD_SIZE;
+    sk2Idx = sk1Idx + skLen;
+    rIdx   = sk2Idx + skLen;
+    pt1Idx = rIdx   + rLen;
+    pt2Idx = pt1Idx + pt1Len;
+    yIdx   = pt2Idx + pt2Len;
+
+    // At the end the additional w variable
+    wIdx   = yIdx + LINYDIM;
 }
 
-// Allocate G,H generators
+// Allocate G,H generators, assumes that setIndexes was called before
 void VerifierData::computeGenerators() {
     // How many generators: The +1 is due to the transformation that
     // makes the linear and quadratic lists disjoint, which adds another
     // variable. The indexing assumes that pt1,pt2,y are at the end after
     // all the others.
-    int gLen = wIdx+1; 
-    int hLen = pt1Idx+1;
+    int gLen = wIdx +1;
+    int hLen = sk1Idx +1;
     Gs.resize(gLen);
     Hs.resize(hLen);
     for (int i=0; i<gLen; i++)
         Gs[i] = ped->getG(i);
     for (int i=0; i<hLen-1; i++)
         Hs[i] = ped->getH(i);
-    Hs[hLen-1] = ped->getH(gLen-1); // the last H generator has different index
+    Hs[hLen-1] = ped->getH(wIdx);
 }
 
 
@@ -261,9 +299,19 @@ Point commit2(const EVector& v, size_t genIdx,
             conv(xes[idx], coeff(v[i], j));
             idx++;
         }
+    std::vector<Point> GplusH(n);
+    for (int i=0; i<n; i++)
+        GplusH[i] = Gs[i+genIdx] + Hs[i+genIdx];
+
     r.randomize();
-    return DLPROOFS::commit2(&(Gs[genIdx]), xes.data(),
-                             &(Hs[genIdx]), xes.data(), xes.size(), r);
+    Point C = DLPROOFS::commit(GplusH.data(), xes.data(), xes.size(), r);
+
+#ifdef DEBUGGING
+    if (C != DLPROOFS::commit2(&(Gs[genIdx]), xes.data(),
+                             &(Hs[genIdx]), xes.data(), xes.size(), r))
+        throw std::runtime_error("commit and commit2 disagree");
+#endif
+    return C;
 }
 
 // Add to v four integers a,b,c,d such that the result
@@ -300,19 +348,20 @@ void pad2exactNorm(const ALGEBRA::Element* v, size_t len,
 void pad2exactNorm(const EVector& v, EVector& pad, const BigInt& bound) {
     size_t n = v.length();
     size_t extra = ceilDiv(PAD_SIZE,scalarsPerElement());
+    resize(pad,extra);
     pad2exactNorm(&(v[0]), n, &(pad[0]), bound);
 }
     
+// The expand functions below assume that GF(p^ell) is represented
+// modulo X^ell +1.
 
-// Expand a constraint a*x with a in GF(p^e) to e constrints over scalars,
-// namely store in e constraints in e variables the e-by-e matrix representing
-// the multiply-by-a matrix over the mase field.
-// The variables in the constraints are idx,idx+1,... I.e., the constraints
-// are idx -> a.freeTerm, idx+1 -> a.coeffOf(X), idx+2 -> a.coeffOf(X^2),...
-// These functions assume that GF(p^e) is represented modulo X^e +1.
+// Expand a constraint a*x with a in GF(p^ell) to e constrints over scalars,
+// namely store in 'constrs' ell constraints in ell variables, representing
+// the ell-by-ell scalar matrix for multiply-by-a. The variables in these
+// constraints are indexed by idx,idx+1,... For example, the constraints
+// for the 1st row has coeffs: idx->a.freeTerm, idx+1 -> a.coeffOf(X),...
 void expandConstraints(LinConstraint* constrs, int idx, const Element& a) {
-    // expand e into the scalar matrix representing multiply-by-e
-
+    // expand a into the scalar matrix representing multiply-by-a
     for (int i=0; i<scalarsPerElement(); i++) {
         for (int j=0; j<scalarsPerElement(); j++) {
             CRV25519::Scalar s;
@@ -324,16 +373,14 @@ void expandConstraints(LinConstraint* constrs, int idx, const Element& a) {
         }
     }
 }
-// Expand <v,x> for a slice of a vector v over GF(p^e)
+// Expand <v,x> for a slice of a vector v over GF(p^ell)
 void expandConstraints(LinConstraint* constrs, int idx,
                       const EVector& v, int from, int to) {
-    if (to < 0)
-        to = v.length();
-
+    if (to < 0) to = v.length();
     for (size_t i=from; i<to; i++, idx += scalarsPerElement())
         expandConstraints(constrs, idx, v[i]);
 }
-// Convert <v,x> for a slice of a vector v over GF(p^e), where x is over Z_p
+// Convert <v,x> for a slice of a vector v over GF(p^ell), where x is over Z_p
 void makeConstraints(LinConstraint* constrs, int idx,
                       const EVector& v, int from, int to) {
     if (to < 0)
@@ -375,80 +422,34 @@ void powerVector(std::vector<CRV25519::Scalar>& vec, const CRV25519::Scalar& x, 
         vec[i] = vec[i-1] * x;
 }
 
-void addToWitness(DLPROOFS::PtxtVec& witness, int idx, const SVector& v)
-{
-    for (int i=0; i<v.length(); i++) conv(witness[idx+i], v[i]);
-}
-void addToWitness(DLPROOFS::PtxtVec& witness, int idx, const EVector& v)
-{
-    for (int i=0; i<v.length(); i++) for (int j=0; j<scalarsPerElement(); j++)
-        conv(witness[idx++], coeff(v[i],j));
-}
-
-// Collect all the secret cariables in a DLPROOFS::PtxtVec map
-void ProverData::assembleNormWitness(DLPROOFS::PtxtVec& witness) {
-    if (decErr) addToWitness(witness, vd->decErrIdx, *decErr);
-    addToWitness(witness, vd->decErrPadIdx, decErrPadding);
-
-    addToWitness(witness, vd->r2Idx, r2);
-    addToWitness(witness, vd->r2PadIdx, r2Padding);
-    addToWitness(witness, vd->encErrIdx, encErr);
-    addToWitness(witness, vd->encErrPadIdx, encErrPadding);
-
-    addToWitness(witness, vd->sk3Idx, sk3);
-    addToWitness(witness, vd->sk3PadIdx, sk3Padding);
-    addToWitness(witness, vd->kGenErrIdx, kGenErr);
-    addToWitness(witness, vd->kGenErrPadIdx, kGenErrPadding);
-}
-
-// Collect all the secret cariables in a DLPROOFS::PtxtVec map
-void ProverData::assembleLinearWitness(DLPROOFS::PtxtVec& witness) {
-    if (sk1) addToWitness(witness, vd->sk1Idx, *sk1);
-    if (sk2) addToWitness(witness, vd->sk2Idx, *sk2);
-    if (r) addToWitness(witness, vd->rIdx, *r);
-    if (pt1) addToWitness(witness, vd->pt1Idx, *pt1);
-    if (pt2) addToWitness(witness, vd->pt2Idx, *pt2);
-    addToWitness(witness, vd->yIdx, y);
-}
-
-
-
-// debugging tools
+// debugging/monitoring tools
 
 bool checkQuadCommit(DLPROOFS::QuadConstraint& c,
-    const TwoPoints& coms, const TwoPoints& padComs, const TwoScalars& rnds,
-    const TwoScalars& padRnds, DLPROOFS::PtxtVec& witness, PedersenContext* ped)
+    const Point& com, const Point& padCom, const CRV25519::Scalar& rnd,
+    const CRV25519::Scalar& padRnd, DLPROOFS::PtxtVec& witness, PedersenContext* ped)
 {
-    auto comG = coms[0] + padComs[0];
-    auto randG= rnds[0] + padRnds[0];
-    auto comH = coms[1] + padComs[1];
-    auto randH= rnds[1] + padRnds[1];
+    auto comm = com + padCom;
+    auto rand = rnd + padRnd;
 
     std::vector<CRV25519::Scalar> w;
-    std::vector<CRV25519::Point> gs;
-    std::vector<CRV25519::Point> hs;
+    std::vector<CRV25519::Point> gens;
     for (auto i: c.indexes) {
-        gs.push_back(ped->getG(i));
-        hs.push_back(ped->getH(i));
+        gens.push_back(ped->getG(i) + ped->getH(i));
         w.push_back(witness[i]);
     }
-    if (!DLPROOFS::verifyCom(comG, gs.data(), w.data(), gs.size(), randG))
-        return false;
-    return DLPROOFS::verifyCom(comH, hs.data(), w.data(), hs.size(), randH);
+    return DLPROOFS::verifyCom(comm, gens.data(), w.data(), gens.size(), rand);
 }
 bool checkLinCommit(DLPROOFS::PtxtVec& pv,
-    const std::vector<Point>& coms, const std::vector<CRV25519::Scalar>& rnds,
+    const Point& com, const CRV25519::Scalar& rnd,
     DLPROOFS::PtxtVec& witness, PedersenContext* ped)
 {
-    Point C = std::accumulate(coms.begin(), coms.end(), Point::identity());
-    CRV25519::Scalar r = std::accumulate(rnds.begin(), rnds.end(), CRV25519::Scalar());
     std::vector<CRV25519::Scalar> w;
     std::vector<CRV25519::Point> gs;
     for (auto& it: pv) {
         gs.push_back(ped->getG(it.first));
         w.push_back(witness[it.first]);
     }
-    return DLPROOFS::verifyCom(C, gs.data(), w.data(), gs.size(), r);
+    return DLPROOFS::verifyCom(com, gs.data(), w.data(), gs.size(), rnd);
 }
 
 } // end of namespace REGEVENC

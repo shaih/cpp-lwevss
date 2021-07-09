@@ -22,6 +22,7 @@
  * OTHER DEALINGS IN THE SOFTWARE.
  **/
 #include <iostream>
+#include <cmath>
 #include <cassert>
 #include "regevEnc.hpp"
 #include "utils.hpp"
@@ -69,80 +70,40 @@ Element GlobalKey::initPdeltaG() { // Implementation is NTL-specific
     return g; // will be assigned to GlobalKey::gElement
 }
 
-static bool constraint(int n, int logA, int logC, int &k, int &m, int &logB) {
-    k = ceil(37.5*(254-logA));
-    m = ceil(37.5*(254-logC));
-    BigInt A = BigInt(1)<<logA;
-    BigInt C = BigInt(1)<<logC;
-    BigInt B = KeyParams::delta * (multDbl(sqrt(k),A) + multDbl(sqrt(m),C));
-    logB = NumBits(B);
-    B = BigInt(1)<<logB;
+// Find parameters that satisfy the constraints
+void KeyParams::setParams() {
+  int kk;
+  int nn = n*GlobalKey::ell;
+  int tt = (nn-1)/2;
+  int lognSqrtT = ceil(log2(nn) + log(tt)/2); // log_2(nn*sqrt(tt))
+  // Start from a large sigmaEnc, then count down until you find a value that works
+  int start = (GlobalKey::pSize*(GlobalKey::ell-1)) / GlobalKey::ell;
+  for (sigmaEnc1=start-lognSqrtT-11; sigmaEnc1>0; sigmaEnc1--) {
+      kk = ceil(37.5*(GlobalKey::pSize+2-sigmaEnc1));
+      k = (kk+GlobalKey::ell-1)/GlobalKey::ell; // ceil(kk/ell)
+      kk = GlobalKey::ell * k; // round up to a multiple of ell
 
-    BigInt bound1 = multDbl(1.32*sqrt(m), C);
-    BigInt bound2 = NTL::to_ZZ(3.96*sqrt(k));
-    BigInt bound3 = NTL::SqrRoot(multDbl(1.7424, k*A*A+n*B*B));
-    BigInt bound4 = NTL::to_ZZ(3.96*sqrt(m));
-    BigInt bound5 = NTL::SqrRoot(multDbl(5.6454, k*(k*A*A+n*B*B)+m*C));
-
-    if (multDbl(28*KeyParams::extra*sqrt(5*n/16.0 +520), bound5) > BigInt(1)<<126)
-        return false;
-
-    if (bound1*bound4 + bound2*bound3 + 4*bound5 > BigInt(1)<<125)
-        return false;
-
-    return true;
-}
-
-KeyParams::KeyParams(int _n): n(_n*GlobalKey::ell) {
-    k = m = 10000000; // start from a very large number
-
-    // Find the best solution with A=C, m=k
-    int lA, lB, lC;
-    for (lA=126; lA>80; lA--) { // count downwards
-        if (constraint(n, lA, lA, k, m, lB)) {
-            sigmaKG = sigmaEnc1 = lA;
-            sigmaEnc2 = lB;
-            break;
-        }
-    }
-    
-    // look for solutions with sigmaKG < sigmaEnc1
-    for (lC=lA+1; lC<lA+20; lC++)
-        for (int lA2=lA; lA2>lA-40; lA2--) {
-            int k2, m2;
-            if (constraint(n, lA2, lC, k2, m2, lB) && k2+m2 < k+m) {
-                k = k2;
-                m = m2;
-                sigmaKG = lA2;
-                sigmaEnc1 = lC;
-                sigmaEnc2 = lB;
-            }
-        }
-    // look for solutions with C<A
-    for (lC=lA-1; lC<lA-20; lC--)
-        for (int lA2=lA; lA2<lA+40; lA2++) {
-            int k2, m2;
-            if (constraint(n, lA2, lC, k2, m2, lB) && k2+m2 < k+m) {
-                k = k2;
-                m = m2;
-                sigmaKG = lA2;
-                sigmaEnc1 = lC;
-                sigmaEnc2 = lB;
-            }
-        }
+      // check if P^{(ell-1)/2} > 2^sigmaEnc1 * 600 n sqrt(n*t)
+      int logSqrtK = ceil(log2(kk)/2);
+      if (start >= sigmaEnc1+lognSqrtT+10+logSqrtK)
+        break;
+  }
+  auto e2e1gap = 124080L*kk*tt; // 124080*kk*tt
+  e2e1gap = ceil(log2(e2e1gap) / 2); // log_2(sqrt(124080*kk*tt))
+  sigmaEnc2 = sigmaEnc1 + e2e1gap;
 }
 
 GlobalKey::GlobalKey(const std::string tg, const KeyParams &prms, const EMatrix* crs):
-        nPks(0),tag(tg),kay(prms.k/ell),emm(prms.m/ell),enn(prms.n/ell),
-        sigmaKG(prms.sigmaKG),sigmaEnc1(prms.sigmaEnc1),sigmaEnc2(prms.sigmaEnc2)
+        nPks(0),tag(tg),kay(prms.k/ell),enn(prms.n/ell),
+        sigmaEnc1(prms.sigmaEnc1),sigmaEnc2(prms.sigmaEnc2)
 {
-    if (kay<=0 || emm<=0 || enn<=0 || sigmaKG<=1 || sigmaEnc1<=1 || sigmaEnc2<=1) {
+    if (kay<=0 || enn<=0 || sigmaEnc1<=1 || sigmaEnc2<=2) {
         throw std::runtime_error("GlobalKey with invalid parameters");
     }
-    tee = ((enn-1)/16)*8; // less than n/2, divisible by 8
+    tee = ((enn-1)/(2*ell))*ell; // less than n/2, divisible by ell
     assert(tee>0);       // sanity check
-    resize(A,kay,emm);
-    resize(B,enn,emm);
+    resize(A,kay,kay);
+    resize(B,enn,kay);
 
     // Fill the CRS with pseudorandom entries, derived from the tag,
     // also hash them to get a fingerprint
@@ -181,8 +142,8 @@ void GlobalKey::setKeyHash() {
 
 // Add the generated pk to the global key and return its index
 size_t GlobalKey::addPK(const EVector& pk) { // This function is NOT thread-safe
-    if (pk.length() != emm) {
-        throw std::runtime_error("Public keys must be "+std::to_string(emm)+"-vectors");
+    if (pk.length() != kay) {
+        throw std::runtime_error("Public keys must be "+std::to_string(kay)+"-vectors");
     }
     size_t idx = nPks++;
     if (idx >= enn) {
@@ -200,26 +161,29 @@ void GlobalKey::internalKeyGen(EVector& sk, EVector& pk, EVector& noise) const
 {
     // allocate space for the different components
     resize(sk,kay);
-    resize(noise,emm);
+    resize(noise,kay);
 
-    // Choose a random secret key, each entry in [+-(2^{skSize} -1)]
-    BoundedSizeElement rSK(skSize);
-    BigInt bound( ceil(0.47*kay*ell*((1UL<<skSize) -1)*((1UL<<skSize)-1)) );
+    assert(rho==2); // sanity check, just in case we ever change that
+
+    // Choose a random secret key, each entry in [+-3], reset until
+    // the size is no more than 2*Sqrt(kk)
+    {BoundedSizeElement rSK(rho);
+    int bound = 4*kay*ell;
     for (int nTrials = 0; ; nTrials++) {
-        if (++nTrials > 100) {
+        if (nTrials > 50) {
             throw std::runtime_error("internalKeyGen: too many retrys choosing sk");
         }
         for (int i=0; i<sk.length(); i++) rSK.randomize(sk[i]);
         if (normSquaredBigInt(sk) <= bound)
             break;
-    }
+    }}
 
-    // The error vector entries are chosen from [+-2^{sigmaKG}]
-    BoundedSizeElement rNoise(sigmaKG);
-    bound = (BigInt(1)<<sigmaKG) -1;
-    bound = (9*emm*ell*bound*bound)/25; // 0.36 *m*ell *(2^sigma -1)^2
+    // The error vector entries are chosen from [+-2^{sigmaEnc1}],
+    // reset until the size is no more than 2^{sigmaEnc1}*Sqrt(kk/2)
+    BoundedSizeElement rNoise(sigmaEnc1);
+    BigInt bound = (BigInt(1)<<(2*sigmaEnc1)) * kay*ell/2;
     for (int nTrials = 0; ; nTrials++) {
-        if (++nTrials > 100) {
+        if (nTrials > 50) {
             throw std::runtime_error("internalKeyGen: too many retrys choosing noise");
         }
         for (int i=0; i<noise.length(); i++) rNoise.randomize(noise[i]);
@@ -232,12 +196,12 @@ void GlobalKey::internalKeyGen(EVector& sk, EVector& pk, EVector& noise) const
 
 // Encrypt a vector of plaintext scalars
 void GlobalKey::internalEncrypt(EVector& ctxt1, EVector& ctxt2,
-                        const SVector& ptxt, EVector& arr, EVector& e) const {
-    if (A.NumRows() != kay || A.NumCols() != emm
-        || B.NumRows() != enn || B.NumCols() != emm) { // sanity check
+                const SVector& ptxt, EVector& arr, EVector& e1, EVector& e2) const {
+    if (A.NumRows() != kay || A.NumCols() != kay
+        || B.NumRows() != enn || B.NumCols() != kay) { // sanity check
         throw std::runtime_error("mal-formed public key, expected "+std::to_string(kay)
-            +"-by-"+std::to_string(emm)+" CRS and "+std::to_string(enn)
-            +"-by-"+std::to_string(emm)+" global PK");
+            +"-by-"+std::to_string(kay)+" CRS and "+std::to_string(enn)
+            +"-by-"+std::to_string(kay)+" global PK");
     }
     // # plaintext elements must equal # of rows in the global key
     if (ptxt.length() != B.NumRows()) {
@@ -246,48 +210,53 @@ void GlobalKey::internalEncrypt(EVector& ctxt1, EVector& ctxt2,
             + std::to_string(ptxt.length())+" scalars");
     }
 
-    resize(arr,emm);    // the dimension-m encryption-randomness vector
-    BoundedSizeElement rEnc(rho);// entries are signed rho-bit integers
-    BigInt bound( ceil(0.49*emm*ell*((1UL<<rho)-1)*((1UL<<rho)-1)) );
-    //std::cout << "choosing r:";
+    resize(arr,kay);    // the dimension-m encryption-randomness vector
+    // choose the randomness, each entry in [+-3], reset until
+    // the size is no more than 2*Sqrt(kk)
+    {BoundedSizeElement rSK(rho);
+    int bound = 4 * kay*ell;
     for (int nTrials = 0; ; nTrials++) {
-        if (++nTrials > 100)
+        if (nTrials > 50) {
             throw std::runtime_error("internalEncrypt: too many retrys choosing r");
-        for (auto& e: arr) rEnc.randomize(e);
+        }
+        for (int i=0; i<arr.length(); i++) rSK.randomize(arr[i]);
         if (normSquaredBigInt(arr) <= bound)
             break;
-        //std::cout << " retry";
-    }
-    //std::cout << std::endl;
+    }}
 
     // Compute an encrypiton of zero as (CRS*arr, PK*arr)
     ctxt1 = A * arr;
     ctxt2 = B * arr;
 
     // choose bounded-size noise
-    resize(e, kay+enn);
-    BoundedSizeElement noise1(sigmaEnc1),  noise2(sigmaEnc2);
-    bound = (BigInt(1)<<sigmaEnc1)-1;
-    bound = (9*kay*ell*bound*bound)/25; // 0.36 *k*ell *(2^sigma1 -1)^2
-    {BigInt tmp=(BigInt(1)<<sigmaEnc2)-1;
-    bound += (9*enn*ell*tmp*tmp)/25;}   // + 0.36 *n*ell *(2^sigma2 -1)^2
-    //std::cout << "choosing e: ";
+    resize(e1, kay);
+    // The error vector entries are chosen from [+-2^{sigmaEnc1}],
+    // reset until the size is no more than 2^{sigmaEnc1}*Sqrt(kk/2)
+    {BoundedSizeElement noise1(sigmaEnc1);
+    BigInt bound = (BigInt(1)<<(2*sigmaEnc1)) * kay*ell/2;
     for (int nTrials = 0; ; nTrials++) {
-        if (++nTrials > 100)
-            throw std::runtime_error("internalEncrypt: too many retrys choosing r");
-        for (size_t i=0; i<kay; i++) noise1.randomize(e[i]);
-        for (size_t i=0; i<enn; i++) noise2.randomize(e[kay+i]);
-        if (normSquaredBigInt(e) <= bound)
+        if (++nTrials > 50)
+            throw std::runtime_error("internalEncrypt: too many retrys choosing e1");
+        for (size_t i=0; i<kay; i++) noise1.randomize(e1[i]);
+        if (normSquaredBigInt(e1) <= bound)
             break;
-        //std::cout << " retry";
+    }}
+    resize(e2, enn);
+    BoundedSizeElement noise2(sigmaEnc2);
+    BigInt bound = (BigInt(1)<<(2*sigmaEnc2)) * kay*ell/2;
+    for (int nTrials = 0; ; nTrials++) {
+        if (++nTrials > 50)
+            throw std::runtime_error("internalEncrypt: too many retrys choosing e2");
+        for (size_t i=0; i<enn; i++) noise2.randomize(e2[i]);
+        if (normSquaredBigInt(e2) <= bound)
+            break;
     }
-    //std::cout << std::endl;
 
     // Add the noise, and also g * ptxt to the bottom n rows
     for (size_t i=0; i<kay; i++)
-        ctxt1[i] += e[i];
+        ctxt1[i] += e1[i];
     for (size_t i=0; i<enn; i++)
-        ctxt2[i] += g()*ptxt[i] + e[kay+i];
+        ctxt2[i] += g()*ptxt[i] + e2[i];
 }
 
 // Decrypts a ciphertext, returning ptxt and noise. This function gets
@@ -318,51 +287,7 @@ void GlobalKey::internalDecrypt(Scalar& ptxt,Element& noise,const EVector& sk,
     // y = z0*Delta-z1 = e1-e0*Delta (mod P). If |e1 -e0*Delta|<P/2 then
     // y = e1 -e0*Delta over the integers, and if also |e1| <Delta/2 then
     // (y mod Delta)= e1. Then extract x = -((y mod Delta)+z1)/Delta.
-#if 1
     ptxt = decodePtxt(noisyPtxt, &noise);
-#else
-    static const BigInt deltaZZ = scalar2bigInt(delta());
-    SVector noisyPtVec;
-    conv(noisyPtVec, noisyPtxt);
-    //printSvec(std::cout<<" noisyPtxt=", noisyPtVec) << std::endl;
-
-    BIVector tmpVec;
-    resize(tmpVec, ell);
-    BigInt& tmp = tmpVec[ell-1];
-    for (size_t i=0; i<ell-1; i++) { // tmpVec[i] = e[i+1] - Delta*e[i]
-        tmpVec[i] = scalar2bigInt( noisyPtVec[i]*delta() -noisyPtVec[i+1] );
-        if (tmpVec[i] > P()/2)       // map to [+- P/2]
-            tmpVec[i] -= P();
-    }
-    //std::cout << " tmpVec (e[i+1] - Delta*e[i]) =" << tmpVec << std::endl;
-
-    // sum_{i=0}^{ell-2} Delta^{ell-2-i}*tmpVec[i] = e[ell-1] -Delta^{ell-1}*e[0]
-    tmp = tmpVec[0];
-    for (int i=1; i<ell-1; i++) {
-        tmp *= deltaZZ;
-        tmp += tmpVec[i];
-    }
-
-    // reduce modulo Delta^{ell-1} and map to  [+- Delta^{ell-1}/2]
-    tmp %= delta2ellMinus1();
-    if (tmp >= delta2ellMinus1()/2)
-        tmp -= delta2ellMinus1();
-    else if (tmp < -delta2ellMinus1()/2)
-        tmp += delta2ellMinus1();
-    // now tmp = e[ell-1]
-    //std::cout << "e[ell-1] = " << tmp << std::endl;
-
-    for (int i=ell-2; i>=0; --i) {
-        tmpVec[i] = tmpVec[i+1] -tmpVec[i]; // = Delta*e[i]
-        tmpVec[i] /= deltaZZ;               // = e[i]
-    }
-    SVector noiseVec;
-    conv(noiseVec, tmpVec); // convert to scalars mod P
-    //printSvec(std::cout<<"e = ",noiseVec) << std::endl;
-
-    ptxt = -noisyPtVec[0] -noiseVec[0];
-    conv(noise, noiseVec);
-#endif
 }
 
 // Decode the plaintext scalar from the noisy element, which has the
@@ -375,7 +300,6 @@ Scalar GlobalKey::decodePtxt(Element& noisyPtxt, Element* noise) const {
     SVector noisyPtVec;
     conv(noisyPtVec, noisyPtxt);
 
-    //printSvec(std::cout<<" noisyPtxt=", noisyPtVec) << std::endl;
     BIVector tmpVec;
     resize(tmpVec, ell);
     BigInt& tmp = tmpVec[ell-1];
@@ -384,7 +308,6 @@ Scalar GlobalKey::decodePtxt(Element& noisyPtxt, Element* noise) const {
         if (tmpVec[i] > P()/2)       // map to [+- P/2]
             tmpVec[i] -= P();
     }
-    //std::cout << " tmpVec (e[i+1] - Delta*e[i]) =" << tmpVec << std::endl;
 
     // sum_{i=0}^{ell-2} Delta^{ell-2-i}*tmpVec[i] = e[ell-1] -Delta^{ell-1}*e[0]
     tmp = tmpVec[0];
@@ -408,7 +331,6 @@ Scalar GlobalKey::decodePtxt(Element& noisyPtxt, Element* noise) const {
     }
     SVector noiseVec;
     conv(noiseVec, tmpVec); // convert to scalars mod P
-    //printSvec(std::cout<<"e = ",noiseVec) << std::endl;
 
     if (noise != nullptr) conv(*noise, noiseVec);
 

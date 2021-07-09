@@ -25,6 +25,8 @@
  **/
 #include <iostream>
 #include <set>
+#include <chrono>
+#include "constraints.hpp"
 #include "algebra.hpp"
 
 namespace ALGEBRA {
@@ -51,6 +53,68 @@ inline std::set<int> interval(int from, int to) {
     for (int i=from; i<to; i++) intSet.insert(intSet.end(), i);
     return intSet;
 }
+
+inline void conv(CRV25519::Scalar& to, const ALGEBRA::BigInt& from) {
+    ALGEBRA::bigIntBytes(to.bytes, from, sizeof(to.bytes));
+}
+inline void conv(CRV25519::Scalar& to, const ALGEBRA::Scalar& from) {
+    ALGEBRA::scalarBytes(to.bytes, from, sizeof(to.bytes));
+}
+inline void conv(ALGEBRA::Scalar& to, const CRV25519::Scalar& from) {
+    ALGEBRA::scalarFromBytes(to, from.bytes, sizeof(from.bytes));
+}
+
+inline ALGEBRA::BigInt balanced(const CRV25519::Scalar& s) {
+    ALGEBRA::Scalar as;
+    ALGEBRA::conv(as,s);
+    return ALGEBRA::balanced(as);
+}
+
+inline std::ostream& prettyPrint(std::ostream& st, const DLPROOFS::PtxtVec& v) {
+    st << "[";
+    for (auto& x : v) {
+        st << x.first << "->" << balanced(x.second) << ", ";
+    }
+    return (st << "]");
+}
+inline std::ostream& prettyPrint(std::ostream& st, const DLPROOFS::LinConstraint& c) {
+    prettyPrint(st<<"{", c.terms) << ", " << balanced(c.equalsTo) << "}";
+    return st;
+}
+inline std::ostream& prettyPrint(std::ostream& st, const DLPROOFS::QuadConstraint& c) {
+    st<<"{[";
+    for (auto i : c.indexes) { st << i<< " "; }
+    st << "], " << balanced(c.equalsTo) << "}";
+    return st;
+}
+
+inline void addEVec2Map(DLPROOFS::PtxtVec& mymap, const EVector& v, size_t offset=0) {
+    std::pair<size_t, CRV25519::Scalar> tmp;
+    tmp.first = offset + v.length()*scalarsPerElement() -1;
+    auto it = mymap.end();
+    for (long i=v.length()-1; i>=0; --i)
+        for (long j=scalarsPerElement()-1; j>=0; --j) {
+            it = mymap.insert(it, tmp);
+            conv(it->second, coeff(v[i],j));
+            tmp.first--;
+        }
+}
+inline void addSVec2Map(DLPROOFS::PtxtVec& mymap, const SVector& v, size_t offset=0) {
+    std::pair<size_t, CRV25519::Scalar> tmp;
+    tmp.first = offset +v.length() -1;
+    auto it = mymap.end();
+    for (long i=v.length()-1; i>=0; --i) {
+        it = mymap.insert(it, tmp);
+        conv(it->second, v[i]);
+        tmp.first--;
+    }
+}
+
+inline void addRange2Set(std::set<size_t>& myset, size_t from, size_t len) {
+    auto range = interval(from, from+len);
+    myset.insert(range.begin(), range.end());
+}
+
 } // end of namespace ALGEBRA
 
 inline std::ostream& operator<<(std::ostream& st, const std::set<int>& intSet){
@@ -63,4 +127,6 @@ inline std::ostream& operator<<(std::ostream& st, const std::set<size_t>& intSet
     for (auto i: intSet) st << i << ' ';
     return st << '}';
 }
+
+
 #endif // ifndef _UTILS_HPP_

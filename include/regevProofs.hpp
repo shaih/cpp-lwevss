@@ -37,8 +37,9 @@
 #include "pedersen.hpp"
 #include "shamir.hpp"
 #include "bulletproof.hpp"
+#include "utils.hpp"
 
-//#define DEBUGGING
+#define DEBUGGING
 
 namespace REGEVENC {
 using CRV25519::Point, DLPROOFS::PedersenContext, TOOLS::SharingParams,
@@ -49,49 +50,15 @@ using CRV25519::Point, DLPROOFS::PedersenContext, TOOLS::SharingParams,
 inline constexpr int PAD_SIZE=4; // add 4 scalars to pad to a specific sum-of-squares
 
 // We break the decryption error vector into subvectors, each with this many scalars
-#ifndef DEBUGGING
-inline constexpr int DEC_ERRV_SZ=16; // size of decryption noise subvectors
-inline constexpr int JLDIM = 256;    // Target dimension of Johnson–Lindenstrauss
-inline constexpr int LINYDIM=128;    // Target dimension in approximate l-infty proofs
+#if 1 //ifndef DEBUGGING
+inline constexpr int JLDIM = 256;  // Target dimension of Johnson–Lindenstrauss
+inline constexpr int SQRT_JL =16;
+inline constexpr int LINYDIM=128;  // Target dimension in approximate l-infty proofs
 #else
-inline constexpr int DEC_ERRV_SZ=16;
-inline constexpr int JLDIM = 256;
-inline constexpr int LINYDIM=128;
+inline constexpr int JLDIM = 16;
+inline constexpr int SQRT_JL =4;
+inline constexpr int LINYDIM =8;
 #endif
-
-inline void conv(CRV25519::Scalar& to, const ALGEBRA::BigInt& from) {
-    ALGEBRA::bigIntBytes(to.bytes, from, sizeof(to.bytes));
-}
-inline void conv(CRV25519::Scalar& to, const ALGEBRA::Scalar& from) {
-    ALGEBRA::scalarBytes(to.bytes, from, sizeof(to.bytes));
-}
-inline void conv(ALGEBRA::Scalar& to, const CRV25519::Scalar& from) {
-    ALGEBRA::scalarFromBytes(to, from.bytes, sizeof(from.bytes));
-}
-
-typedef std::array<Point,2> TwoPoints;
-typedef std::array<CRV25519::Scalar,2> TwoScalars;
-
-inline TwoPoints& operator*=(TwoPoints& tp, const CRV25519::Scalar& s) {
-    tp[0] *= s;
-    tp[1] *= s;
-    return tp;
-}
-inline TwoPoints& operator*=(TwoPoints& tp, const TwoScalars& ts) {
-    tp[0] *= ts[0];
-    tp[1] *= ts[1];
-    return tp;
-}
-inline TwoScalars& operator*=(TwoScalars& ts, const CRV25519::Scalar& s) {
-    ts[0] *= s;
-    ts[1] *= s;
-    return ts;
-}
-inline TwoScalars& operator*=(TwoScalars& ts1, const TwoScalars& ts2) {
-    ts1[0] *= ts2[0];
-    ts1[1] *= ts2[1];
-    return ts1;
-}
 
 // More functionality for a Merlin-context wrapper
 struct MerlinRegev: public MerlinBPctx {
@@ -192,54 +159,62 @@ struct VerifierData {
     MerlinRegev *mer;     // Merlin transcript context
     SharingParams *sp;    // parameters of Shamir sharing
 
-    // The various public size bounds
-    ALGEBRA::BigInt B_decNoise;// bounds each sub-vector of decryption noise
-    ALGEBRA::BigInt B_sk;      // bounds the secret-key size
-    ALGEBRA::BigInt B_encRnd;  // bounds the encryption randomness size
-    ALGEBRA::BigInt B_encNoise;// bounds the size of the encryption noise
-    ALGEBRA::BigInt B_kGenNoise;// bounds the size of the keygen noise
+    // Size bounds for the various compressed (JL) vectors
+    ALGEBRA::BigInt B_dNoise; // compressed decryption noise
+    ALGEBRA::BigInt B_sk;     // compressed secret-key
+    ALGEBRA::BigInt B_r;      // comressed encryption randomness
+    ALGEBRA::BigInt B_eNoise1;// compressed small encryption noise
+    ALGEBRA::BigInt B_eNoise2;// compressed large encryption noise
+    ALGEBRA::BigInt B_kNoise; // compressed keygen noise
     ALGEBRA::BigInt B_smallness;// Used in the approximate smallness protocol
-    int smlnsBits =25; // The bitsize of B_smallness above
+    int smlnsBits;  // The bitsize of B_smallness above
+    ALGEBRA::BigInt radix; // the radix used to split large integers into digits
 
     std::vector<Point> Gs, Hs; // lists of generators
 
-    // For most vectors, we have both the vector itself (e.g., decErr*1) and
-    // the padding that the prover computes to pad it to some pre-determined
-    // size (e.g., decErr*2).
-    // The ones without padding are sk1, sk2, r, pt1, pt2, y
-
-    int nDecSubvectors; // number of decryption-noise subvectors
+    // For most vectors, we have the vector itself (e.g., sk2), the
+    // compressed vector (e.g., sk2Comp) and the padding that the prover
+    // computes to pad the compressed vector to some pre-determined size
+    // (e.g., sk2Pad). The ones without compression and padding are
+    // sk1,pt1,pt2,y. For the noise vectors we only need the indexes
+    // of the compressed vector and padding, not the original vector
+    // (since there is no Pedersen commitment to that vector).
 
     // indexes into the generator list
-    int pt1Idx, sk1Idx, decErrIdx, decErrPadIdx,                // decryption
-        pt2Idx, rIdx, r2Idx, r2PadIdx, encErrIdx, encErrPadIdx, // encryption
-        sk2Idx, sk3Idx, sk3PadIdx, kGenErrIdx, kGenErrPadIdx,  // key generation
+    int pt1Idx, sk1Idx, dCompHiIdx, dPadHiIdx, dCompLoIdx, dPadLoIdx, // dec
+        pt2Idx, rIdx, rCompIdx, rPadIdx, eComp1HiIdx, ePad1HiIdx, eComp1LoIdx,
+        ePad1LoIdx, eComp2HiIdx, ePad2HiIdx, eComp2LoIdx, ePad2LoIdx,  // enc
+        sk2Idx, sk2CompIdx, sk2PadIdx,
+        kCompHiIdx, kPadHiIdx, kCompLoIdx, kPadLoIdx,               // keygen
         yIdx, wIdx;                        // smallness proof and aggregation
 
     // Commitments to different variables. The quadratic equations require
-    // two commitment per variable, one with G generators and the other
-    // with H generators.
+    // a double-commitment with respect to both the G and H generators,
+    // while the linear constraints only need commitment wrt the Gs.
 
-    // dec noise will be broken into a number of pieces, for each peice
-    // we will commit separately to the noise itself and to the padding,
-    // each will be committed twice, wrt the Gs and the Hs.
-    std::vector<TwoPoints> decErrCom, decErrPadCom;
-
-    // These vectors only need one commitment wrt the Gs
-    Point sk1Com, sk2Com, rCom, pt1Com, pt2Com, yCom, wCom;
-
-    // These require two commitment per vector, one for G and one for H
-    TwoPoints r2Com, encErrCom, sk3Com, kGenErrCom;
-    TwoPoints r2PadCom, encErrPadCom, sk3PadCom, kGenErrPadCom;
+    Point pt1Com, sk1Com, dCompHiCom, dPadHiCom, dCompLoCom, dPadLoCom,// dec
+        pt2Com, rCom, rCompCom, rPadCom, eComp1HiCom, ePad1HiCom, eComp1LoCom,
+        ePad1LoCom, eComp2HiCom, ePad2HiCom, eComp2LoCom, ePad2LoCom,  // enc
+        sk2Com, sk2CompCom, sk2PadCom,
+        kCompHiCom, kPadHiCom, kCompLoCom, kPadLoCom,               // keygen
+        yCom, wCom;                        // smallness proof and aggregation
 
     // A list of all the linear and quadratic constraints
     std::vector<DLPROOFS::LinConstraint> linConstr;
     std::vector<DLPROOFS::QuadConstraint> normConstr;
 
     // pointers into the above vectors of constraints
-    DLPROOFS::LinConstraint *decLinCnstr, *encLinCnstr, *encLinCnstr2,
-                *kGenLinCnstr, *kGenLinCnstr2, *reShrLinCnstr, *smlnsLinCnstr;
-    DLPROOFS::QuadConstraint *rQuadCnstr, *encErrQuadCnstr, *skQuadCnstr, *kgErrQuadCnstr;
+    static constexpr int dLinIdx=0,   // dec
+        eLin1Idx=GlobalKey::ell,
+        eLin2Idx=2*GlobalKey::ell,
+        rLinIdx=3*GlobalKey::ell,     // enc
+        kLinIdx=4*GlobalKey::ell,
+        sk2LinIdx=5*GlobalKey::ell,   // keygen,
+        smlnsLinIdx=6*GlobalKey::ell, // smallness
+        reShrLinIdx=7*GlobalKey::ell; // resharing
+    static constexpr int dHiQuadIdx=0, dLoQuadIdx=1, rQuadIdx=2,
+        e1HiQuadIdx=3, e1LoQuadIdx=4, e2HiQuadIdx=5, e2LoQuadIdx=6,
+        sk2QuadIdx=7, kHiQuadIdx=8, kLoQuadIdx=9;
 
     ALGEBRA::EVector z; // the masked vector z from the proof of smallness
 
@@ -253,13 +228,12 @@ struct VerifierData {
         sk1Com = sk2Com; // copy commitment to the previous sk wrt the Gs
 
         // zero out all the commitments and constraints
-        TwoPoints empty2points = {Point::identity(),Point::identity()};
-        decErrCom.assign(decErrCom.size(), empty2points);
-        decErrPadCom.assign(decErrPadCom.size(),empty2points);
-        r2Com =encErrCom =sk3Com =kGenErrCom =empty2points;
-        r2PadCom =encErrPadCom =sk3PadCom =kGenErrPadCom =empty2points;
-
-        sk2Com =rCom =pt1Com =pt2Com =yCom =wCom = Point::identity();
+        pt1Com= dCompHiCom= dPadHiCom= dCompLoCom= dPadLoCom= pt2Com= // dec
+        rCom= rCompCom= rPadCom= eComp1HiCom= ePad1HiCom= eComp1LoCom=
+        ePad1LoCom= eComp2HiCom= ePad2HiCom= eComp2LoCom= ePad2LoCom= // enc
+        sk2Com= sk2CompCom= sk2PadCom=
+        kCompHiCom= kPadHiCom= kCompLoCom= kPadLoCom=              // keygen
+        yCom= wCom = Point::identity();
 
         // empty the constraints w/o invalidating the pointers to them
         DLPROOFS::LinConstraint emptyLin;
@@ -278,119 +252,70 @@ struct VerifierData {
 struct ProverData {
     VerifierData *vd;
 
-    // commitment randomness: For vectors involved in quadratic constraints
-    // we have two commitment, wrt both the Gs and the Hs. For decryption
-    // noise we thus have four commitments per subvector.
-    // The linear-only vectors have just one commitment, wrt the Gs.
-    std::vector<TwoScalars> decErrRnd, decErrPadRnd;
+    // commitment randomness
+    CRV25519::Scalar pt1Rnd, sk1Rnd,
+        dCompHiRnd, dPadHiRnd, dCompLoRnd, dPadLoRnd,                  // dec
+        pt2Rnd, rRnd, rCompRnd, rPadRnd, eComp1HiRnd, ePad1HiRnd, eComp1LoRnd,
+        ePad1LoRnd, eComp2HiRnd, ePad2HiRnd, eComp2LoRnd, ePad2LoRnd,  // enc
+        sk2Rnd, sk2CompRnd, sk2PadRnd,
+        kCompHiRnd, kPadHiRnd, kCompLoRnd, kPadLoRnd,               // keygen
+        yRnd, wRnd;                    // smallness proof and aggregation
 
-    TwoScalars r2Rnd, encErrRnd, sk3Rnd, kGenErrRnd;
-    TwoScalars r2PadRnd, encErrPadRnd, sk3PadRnd, kGenErrPadRnd;
-    CRV25519::Scalar rRnd, sk1Rnd, sk2Rnd, pt1Rnd, pt2Rnd, yRnd, wRnd;
+    // The compressed vectors, concatenated
+    ALGEBRA::EVector compressed;
 
-    // The secret committed variables: For the original vectors used in
-    // the scheme itself we just keep a pointer to them, for the extra
-    // vectors in the proofs we allocate separate EVectors to hold them
+    // The witnesses for the linear and quadratic constraints
 
-    ALGEBRA::EVector *sk1, *sk2, *decErr, *r;
-    ALGEBRA::SVector *pt1, *pt2;
-
-    ALGEBRA::EVector decErrPadding, r2, r2Padding;
-    ALGEBRA::EVector encErr, encErrPadding, sk3, sk3Padding,
-                     kGenErr, kGenErrPadding, y;
-
-    // Collect the secret variables in a DLPROOFS::PtxtVec map
-
-    // Collect the secret variables that only appear in linear proofs (sk1,sk2,r,pt1,pt2,y)
-    void assembleLinearWitness(DLPROOFS::PtxtVec& witness);
-    // Collect the secret variables that also appear in norm proofs (everything else)
-    void assembleNormWitness(DLPROOFS::PtxtVec& witness);
-
-    void assembleFullWitness(DLPROOFS::PtxtVec& witness) { // all of them
-        assembleNormWitness(witness);
-        assembleLinearWitness(witness);
-    }
+    DLPROOFS::PtxtVec linWitness;
+    DLPROOFS::PtxtVec quadWitnessG, quadWitnessH;
 
     // Reset when preparing for a new proof at the prover's site
     void prepareForNextProof() {
         vd->prepareForNextProof(); // reset the public data
         sk1Rnd = sk2Rnd; // randomness of commitment to secret key wrt Gs
-        sk1 = sk2;       // the secret key itself
-
-        // zero-out everything else
-        TwoScalars empty2scalars;
-        decErrRnd.assign(vd->nDecSubvectors, empty2scalars);
-        decErrPadRnd.assign(vd->nDecSubvectors, empty2scalars);
-        r2Rnd =encErrRnd =sk3Rnd =kGenErrRnd =empty2scalars;
-        r2PadRnd =encErrPadRnd =sk3PadRnd =kGenErrPadRnd =empty2scalars;
-        rRnd =sk2Rnd =pt1Rnd =pt2Rnd =yRnd =wRnd = CRV25519::Scalar();
-
-        decErr = r = sk2 = nullptr;
-        pt1 = pt2 = nullptr;
-        clear(r2);      clear(r2Padding);
-        clear(encErr);  clear(encErrPadding);
-        clear(sk3);;    clear(sk3Padding);
-        clear(kGenErr); clear(kGenErrPadding);
-        clear(decErrPadding); clear(y);
     }
 
     ProverData() = default;    
     ProverData(VerifierData& verData): vd(&verData) {
-        int paddingSize = ALGEBRA::ceilDiv(PAD_SIZE,ALGEBRA::scalarsPerElement());
-        // Allocate space for commitment randomness to decryption noise
-        decErrRnd.resize(vd->nDecSubvectors);
-        decErrPadRnd.resize(vd->nDecSubvectors);
-        // Allocate space for padding
-        ALGEBRA::resize(decErrPadding, vd->nDecSubvectors*paddingSize);
-        ALGEBRA::resize(r2Padding, paddingSize);
-        ALGEBRA::resize(encErrPadding, paddingSize);
-        ALGEBRA::resize(sk3Padding, paddingSize);
-        ALGEBRA::resize(kGenErrPadding, paddingSize);
-
-        // NOTE: we are not allocating memory for r2, sk3, encErr, kGenErr
-        // These will be allocated when we compute them.
-        // size of JL-compressed vectors
-        //int compressedVecSize 
-        //          = ALGEBRA::ceilDiv(JLDIM,ALGEBRA::scalarsPerElement());
-    
-        sk1 = sk2 = decErr = r = nullptr;
-        pt1 = pt2 = nullptr;
-    }
+        compressed.SetLength(10*(JLDIM+PAD_SIZE)/ALGEBRA::scalarsPerElement());
+   }
 };
 
 // Proof of decryption. We assume that the ProverData,VerifierData are
 // already initialized, and that ProverData contains sk1 and VerifierData
 // contains a commitment to it.
-void proveDecryption(ProverData& pd, const ALGEBRA::SVector& ptxt,
-        const ALGEBRA::EVector& noise, const ALGEBRA::EMatrix& ctMat,
-        const ALGEBRA::EVector& ctVec);
+void proveDecryption(ProverData& pd, 
+    const ALGEBRA::EMatrix& ctMat, const ALGEBRA::EVector& ctVec,
+    const ALGEBRA::SVector& ptxt, const ALGEBRA::EVector& skey,
+    const ALGEBRA::EVector& noise);
 
 void verifyDecryption(VerifierData& vd, // vd has all the commitments
         const ALGEBRA::EMatrix& ctMat, const ALGEBRA::EVector& ctVec);
 
 // Proof of encryption
-void proveEncryption(ProverData& pd, const ALGEBRA::SVector& ptxt,
-        const ALGEBRA::EVector& rnd, const ALGEBRA::EVector& noise,
-        const ALGEBRA::EVector& ct1, const ALGEBRA::EVector& ct2);
+void proveEncryption(ProverData& pd,
+        const ALGEBRA::EVector& ct1, const ALGEBRA::EVector& ct2, 
+        const ALGEBRA::SVector& ptxt, const ALGEBRA::EVector& rnd,
+        const ALGEBRA::EVector& noise1,const ALGEBRA::EVector& noise2);
 
 void verifyEncryption(VerifierData& vd,
         const ALGEBRA::EVector& ct1, const ALGEBRA::EVector& ct2);
 
 // Proof of key-generation. pkNum is index of the pkey in the GlobalKey
-void proveKeyGen(ProverData& pd, const ALGEBRA::EVector& sk,
-        const ALGEBRA::EVector& noise, int pkNum);
+void proveKeyGen(ProverData& pd, int pkNum,
+        const ALGEBRA::EVector& sk, const ALGEBRA::EVector& noise);
 
 void verifyKeyGen(VerifierData& vd, int pkNum);
 
 // Proof of correct re-sharing. It is assumed that pt1, pt2
 // are already initialized in the ps structure
-void proveReShare(ProverData& pd, const TOOLS::EvalSet& recSet);
+void proveReShare(ProverData& pd, const ALGEBRA::SVector& lagrange,
+        const ALGEBRA::SVector& pt1, const ALGEBRA::SVector& pt2);
+void verifyReShare(VerifierData& vd, const ALGEBRA::SVector& lagrange);
+    // TOOLS::EvalSet from shamir.hpp describes the reconstruction set
 
-void verifyKeyGen(VerifierData& vd, const TOOLS::EvalSet& recSet);
-
-// Proof of approximate smallness (of all except the plaintext variables)
+// Proof of approximate smallness (of all except the compressed vectors)
 void proveSmallness(ProverData& pd);
-
 void verifySmallness(VerifierData& vd);
 
 struct ReadyToVerify {
@@ -423,27 +348,22 @@ struct ReadyToVerify {
     void flattenQuadVer(VerifierData& vd);
 };
 struct ReadyToProve : public ReadyToVerify {
+    // Randomness used for linCom and quadCom
     CRV25519::Scalar lComRnd, qComRnd;
-    DLPROOFS::PtxtVec linWitness, quadWitnessG, quadWitnessH;
 
     // Flattened versions of the witnesses
     std::vector<CRV25519::Scalar> linWtns;
     std::vector<CRV25519::Scalar> quadWtnsG, quadWtnsH;
 
     void aggregateProver(ProverData& pd);
-    void flattenLinPrv(VerifierData& vd);
-    void flattenQuadPrv(VerifierData& vd);
+    void flattenLinPrv(ProverData& pd);
+    void flattenQuadPrv(ProverData& pd);
 };
 
 
 /****** utility functions *******/
 
-// record the secret variables in a DLPROOFS::PtxtVec map as needed
-// for the Bulletproof protocols
-void addToWitness(DLPROOFS::PtxtVec& witness, int idx, const ALGEBRA::SVector& v);
-void addToWitness(DLPROOFS::PtxtVec& witness, int idx, const ALGEBRA::EVector& v);
-
-// compute the vector (1,x,x^2,...,x^{len-1})
+// Compute the vector (1,x,x^2,...,x^{len-1})
 void powerVector(ALGEBRA::SVector& vec, const ALGEBRA::Scalar& x, int len);
 void powerVector(ALGEBRA::EVector& vec, const ALGEBRA::Element& x, int len);
 void powerVector(std::vector<CRV25519::Scalar>& vec, const CRV25519::Scalar& x, int len);
@@ -469,56 +389,34 @@ void pad2exactNorm(const ALGEBRA::EVector& v,
 void pad2exactNorm(const ALGEBRA::Element* v, size_t len,
         ALGEBRA::Element* padSpace, const ALGEBRA::BigInt& bound);
 
-// Expand a constraint a*x with a in GF(p^e) to e constrints over scalars,
-// namely store in e constraints in e variables the e-by-e matrix representing
-// the multiply-by-a matrix over the mase field.
-// The variables in the constraints are idx,idx+1,... I.e., the constraints
-// are idx -> a.freeTerm, idx+1 -> a.coeffOf(X), idx+2 -> a.coeffOf(X^2),...
-// These functions assume that GF(p^e) is represented modulo X^e +1.
+// The expand functions below assume that GF(p^ell) is represented
+// modulo X^ell +1.
+
+// Expand a constraint a*x with a in GF(p^ell) to e constrints over scalars,
+// namely store in 'constrs' ell constraints in ell variables, representing
+// the ell-by-ell scalar matrix for multiply-by-a. The variables in these
+// constraints are indexed by idx,idx+1,... For example, the constraints
+// for the 1st row has coeffs: idx->a.freeTerm, idx+1 -> a.coeffOf(X),...
 void expandConstraints(LinConstraint* constrs, int idx, const ALGEBRA::Element& a);
+
+// Expand each of the constraints v[i]*x with successive indexes
 void expandConstraints(LinConstraint* constrs, int idx,
                        const ALGEBRA::EVector& v, int from=0, int to=-1);
 
 // This function is for the case where the secret variables are from Z_p,
-// namely we have the constraint <x,v>=b over GF(p^e), but x iv over Z_p.
+// namely we have the constraint <x,v>=b over GF(p^ell), but x is over Z_p.
 void makeConstraints(LinConstraint* constrs, int idx,
                      const ALGEBRA::EVector& v, int from=0, int to=-1);
 
 // This function sets the equalsTo field for the ell constraints
-// corresponding to the ell scalars representing the element r
+// corresponding to the ell scalars representing the element e
 void setEqsTo(LinConstraint* constrs, const ALGEBRA::Element& e);
 
-// Useful routines for printing ZZ_p's with small magnitude
-
-inline ALGEBRA::BigInt balanced(const CRV25519::Scalar& s) {
-    ALGEBRA::Scalar as;
-    conv(as,s);
-    return ALGEBRA::balanced(as);
-}
-
-inline std::ostream& prettyPrint(std::ostream& st, const DLPROOFS::PtxtVec& v) {
-    st << "[";
-    for (auto& x : v) {
-        st << x.first << "->" << balanced(x.second) << ", ";
-    }
-    return (st << "]");
-}
-inline std::ostream& prettyPrint(std::ostream& st, const DLPROOFS::LinConstraint& c) {
-    prettyPrint(st<<"{", c.terms) << ", " << balanced(c.equalsTo) << "}";
-    return st;
-}
-inline std::ostream& prettyPrint(std::ostream& st, const DLPROOFS::QuadConstraint& c) {
-    st<<"{[";
-    for (auto i : c.indexes) { st << i<< " "; }
-    st << "], " << balanced(c.equalsTo) << "}";
-    return st;
-}
-
 bool checkQuadCommit(DLPROOFS::QuadConstraint& c,
-    const TwoPoints& coms, const TwoPoints& padComs, const TwoScalars& rnds,
-    const TwoScalars& padRnds, DLPROOFS::PtxtVec& witness, PedersenContext* ped);
+    const Point& com, const Point& padCom, const CRV25519::Scalar& rnd,
+    const CRV25519::Scalar& padRnd, DLPROOFS::PtxtVec& witness, PedersenContext* ped);
 bool checkLinCommit(DLPROOFS::PtxtVec& pv,
-    const std::vector<Point>& coms, const std::vector<CRV25519::Scalar>& rnds,
+    const Point& com, const CRV25519::Scalar& rnd,
     DLPROOFS::PtxtVec& witness, PedersenContext* ped);
 
 } // end of namespace REGEVENC
