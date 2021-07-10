@@ -132,17 +132,17 @@ VerifierData::VerifierData(GlobalKey& g, PedersenContext& p,
     // A bound on the l-infty norm of the compressed "small" noise vectors:
     // The small noise is bounded in l2 by sig_kg*sqrt(kk/2), so the compressed
     // vector is bounded by sqrt(337) * sig_kk*sqrt(kk/2)
-    B_eNoise1 = B_kNoise = multDbl(sqrt(kk*337/2.0), sig_kg);
+    B_eNoise1 = B_kNoise = multDbl(sqrt(kk*337.0/2), sig_kg);
 
     // A bound on the l-infty norm of the compressed "large" noise vector
-    B_eNoise2 = multDbl(sqrt(nn*337/2.0), sig_e2);
+    B_eNoise2 = multDbl(sqrt(nn*337.0/2), sig_e2);
 
     // A bound on the l-infty norm of the compressed decryption noise:
     // The decryption noise itself, for an honest party, is bounded in
     // l2 norm by 1.7*sig_e2*nn + 24*sig_kg*sqrt(kk*nn). The compressed
     // vector, therefore, is bound in l2 norm whp by:
     //     sqrt(337) * (1.7*sig_e2*nn + 24*sig_kg*sqrt(kk*nn)).
-    B_dNoise = multDbl(sqrt(337)*1.7, sig_e2*nn) + multDbl(sqrt(kk*nn*377), 24*sig_kg);
+    B_dNoise = multDbl(sqrt(337)*1.7, sig_e2*nn) + multDbl(sqrt(double(kk)*nn*377.0), 24*sig_kg);
 
     // sanity-check, we should have B_sk < B_eNoise1 < B_eNoise2 < B_dNoise
     if (B_sk >= B_eNoise1 || B_eNoise1 >= B_eNoise2 || B_eNoise2 >= B_dNoise) {

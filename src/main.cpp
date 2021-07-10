@@ -56,7 +56,7 @@ int main(int argc, char** argv) {
     // The dimensions of the the CRX is k-by-m, but note that this is a
     // matrix over GF(p^2) so the lattice dimensions we get is twice that
     KeyParams kp(nParties);
-    kp.k=64;
+    // kp.k=64;
     GlobalKey gpk("testContext", kp);
     std::cout <<"{ kay:"<<gpk.kay<<", enn:"<<gpk.enn
       <<", sigmaEnc1:"<<gpk.sigmaEnc1<<", sigmaEnc2:"<<gpk.sigmaEnc2<<" }\n";

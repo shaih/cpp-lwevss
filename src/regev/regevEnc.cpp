@@ -94,7 +94,7 @@ void KeyParams::setParams() {
 }
 
 GlobalKey::GlobalKey(const std::string tg, const KeyParams &prms, const EMatrix* crs):
-        nPks(0),tag(tg),kay(prms.k/ell),enn(prms.n/ell),
+        nPks(0),tag(tg),kay(prms.k),enn(prms.n),
         sigmaEnc1(prms.sigmaEnc1),sigmaEnc2(prms.sigmaEnc2)
 {
     if (kay<=0 || enn<=0 || sigmaEnc1<=1 || sigmaEnc2<=2) {
