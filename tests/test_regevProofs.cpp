@@ -183,21 +183,13 @@ bool test_constraints() {
 
 
 bool test_proofs() {
-    // The dimensions of the the CRX is k-by-m, but note that this is
-    // a matrix over GF(p^2) so the lattice dimensions we get it twice
-    // that
-    //KeyParams kp;
-    //kp.k=64; kp.m=64; kp.n=64;
-    //kp.sigmaKG=10; kp.sigmaEnc1=10; kp.sigmaEnc2=20;
-    KeyParams kp(128);
+    // The dimensions of the the CRX is k-by-m, but note that this is a
+    // matrix over GF(p^2) so the lattice dimensions we get is twice that
+    KeyParams kp(64);
 #ifdef DEBUGGING
-    std::cout << "n="<<kp.n<<", k="<<kp.k<<"->128\n";
-    //<<", sigma1="<<kp.sigmaEnc1<<"->3, "
-    //<< "sigma2="<<kp.sigmaEnc2<<"->13\n";
-    //kp.sigmaEnc1 = 13;
-    //kp.sigmaEnc1 = 23;
-    kp.k=128;// make smaller dimension for debugging
+    std::cout << "n="<<kp.n<<", k="<<kp.k<<"->64\n";
 #endif
+    kp.k=128;// make smaller dimension for debugging
 
     GlobalKey gpk("testContext", kp);
     TernaryEMatrix::init();
@@ -272,18 +264,16 @@ bool test_proofs() {
         ctxtVec[i] = ctxt1[i].second[partyIdx];
     }
 
-    // prepare for proof, pad the secret key to exact norm and commit to it
+    // prepare for proof, commit to the secret key
     int origSize = sk[partyIdx].length(); 
-    //pd.sk1 = &(sk[partyIdx]);
-
-    // Commit to the original key wrt the G's
+   
     vd.sk1Com = commit(sk[partyIdx], vd.sk1Idx, vd.Gs, pd.sk1Rnd);
+
+    SVector lagrange = vd.sp->lagrangeCoeffs(interval(1,gpk.tee+1));
 
     proveDecryption(pd, ctxtMat, ctxtVec, ptxt2, sk[partyIdx], decNoise);
     proveEncryption(pd, ctxt2.first, ctxt2.second, ptxt3, encRnd, eNoise.first, eNoise.second);
     proveKeyGen(pd, partyIdx, sk[partyIdx], kgNoise[partyIdx]);
-
-    SVector lagrange = vd.sp->lagrangeCoeffs(interval(1,gpk.tee+1));
     proveReShare(pd, lagrange, ptxt2, ptxt3);
     proveSmallness(pd);
 

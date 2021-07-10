@@ -135,7 +135,7 @@ VerifierData::VerifierData(GlobalKey& g, PedersenContext& p,
     B_eNoise1 = B_kNoise = multDbl(sqrt(kk*337/2.0), sig_kg);
 
     // A bound on the l-infty norm of the compressed "large" noise vector
-    B_eNoise2 = multDbl(sqrt(kk*337/2.0), sig_e2);
+    B_eNoise2 = multDbl(sqrt(nn*337/2.0), sig_e2);
 
     // A bound on the l-infty norm of the compressed decryption noise:
     // The decryption noise itself, for an honest party, is bounded in

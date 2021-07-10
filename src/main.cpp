@@ -53,18 +53,13 @@ int main(int argc, char** argv) {
         nParties = 512;
     std::cout << "nParties="<<nParties << std::endl;
 
-    // The dimensions of the the CRX is k-by-m, but note that this is
-    // a matrix over GF(p^2) so the lattice dimensions we get it twice
-    // that
+    // The dimensions of the the CRX is k-by-m, but note that this is a
+    // matrix over GF(p^2) so the lattice dimensions we get is twice that
     KeyParams kp(nParties);
-    kp.k=kp.m=5928; // adjust dimensions
+    kp.k=64;
     GlobalKey gpk("testContext", kp);
-    gpk.sigmaKG--;
-    gpk.sigmaEnc1--;
-    gpk.sigmaEnc2-=5;
-    std::cout << "{ kay:"<<gpk.kay <<", emm:"<<gpk.emm << ", enn:"<<gpk.enn << std::endl;
-    std::cout << "  sigmaKG:"<<gpk.sigmaKG<<", sigmaEnc1:"<<gpk.sigmaEnc1
-        << ", sigmaEnc2:"<<gpk.sigmaEnc2 << " }\n";
+    std::cout <<"{ kay:"<<gpk.kay<<", enn:"<<gpk.enn
+      <<", sigmaEnc1:"<<gpk.sigmaEnc1<<", sigmaEnc2:"<<gpk.sigmaEnc2<<" }\n";
 
     TernaryEMatrix::init();
     MerlinRegev mer;
@@ -76,7 +71,7 @@ int main(int argc, char** argv) {
     // Generate/verify the proofs by the second party (idx=1)
     int partyIdx = 1;
 
-    // Key generation for the parties
+    // Key generation for all the parties
     std::vector<ALGEBRA::EVector> kgNoise(gpk.enn);
     std::vector<ALGEBRA::EVector> sk(gpk.enn);
     std::vector<ALGEBRA::EVector> pk(gpk.enn);
@@ -97,12 +92,12 @@ int main(int argc, char** argv) {
     // secret sharing of a random value , the secret itself is sshr[0]
     ALGEBRA::SVector sshr;
     ssp.randomSharing(sshr);
-    for (int i=0; i<gpk.tee; i++) {
+    for (int i=0; i<gpk.enn; i++) {
         resize(ptxt1[i], gpk.enn);
         for (int j=0; j<gpk.enn; j++) ptxt1[i][j] = sshr[i+1];
     }
     start = chrono::steady_clock::now();
-    for (int i=0; i<gpk.tee; i++) {
+    for (int i=0; i<gpk.enn; i++) {
         ctxt1[i] = gpk.encrypt(ptxt1[i]);
     }
     end = chrono::steady_clock::now();
@@ -132,9 +127,8 @@ int main(int argc, char** argv) {
     resize(ptxt3, gpk.enn);
     for (int j=0; j<gpk.enn; j++) ptxt3[j] = sshr[j+1];
     ALGEBRA::EVector encRnd;
-    REGEVENC::GlobalKey::CtxtPair encNoise;
-
-    auto ctxt2 = gpk.encrypt(ptxt3, encRnd, encNoise);
+    REGEVENC::GlobalKey::CtxtPair eNoise;
+    auto ctxt2 = gpk.encrypt(ptxt3, encRnd, eNoise);
 
     // Copy the first t ciphertexts into a k x t matrix and another t-vector
     EMatrix ctxtMat;
@@ -151,15 +145,18 @@ int main(int argc, char** argv) {
     DLPROOFS::Point::counter = 0;
     DLPROOFS::Point::timer = 0;
     int origSize = sk[partyIdx].length(); 
-    //pd.sk1 = &(sk[partyIdx]);
+   
     vd.sk1Com = commit(sk[partyIdx], vd.sk1Idx, vd.Gs, pd.sk1Rnd);
 
     start = chrono::steady_clock::now();
-/*    proveDecryption(pd, ptxt2, decNoise, ctxtMat, ctxtVec);
-    proveEncryption(pd, ptxt3, encRnd, encNoise, ctxt2.first, ctxt2.second);
-    proveKeyGen(pd, sk[partyIdx], kgNoise[partyIdx], partyIdx);
-    proveReShare(pd, interval(1,gpk.tee+1));
-*/    proveSmallness(pd);
+    SVector lagrange = vd.sp->lagrangeCoeffs(interval(1,gpk.tee+1));
+
+    proveDecryption(pd, ctxtMat, ctxtVec, ptxt2, sk[partyIdx], decNoise);
+    proveEncryption(pd, ctxt2.first, ctxt2.second, ptxt3, encRnd, eNoise.first, eNoise.second);
+    proveKeyGen(pd, partyIdx, sk[partyIdx], kgNoise[partyIdx]);
+    proveReShare(pd, lagrange, ptxt2, ptxt3);
+    proveSmallness(pd);
+
     end = chrono::steady_clock::now();
     ticks = chrono::duration_cast<chrono::milliseconds>(end - start).count();
     std::cout << "preparing to prove and committing in "<<ticks<< " milliseconds, "

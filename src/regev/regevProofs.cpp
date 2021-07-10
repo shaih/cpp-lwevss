@@ -97,6 +97,9 @@ void proveDecryption(ProverData& pd,
     //     <sk,ctMat*R*xvec> +<ptxt,g*R*xvec> +<eLo,xvec> +<eHi,radix*xvec>
     //     = <ctVec,R*xvec>
     auto* lCnstr = &(vd.linConstr[vd.dLinIdx]);
+    for (int i=0; i<GlobalKey::ell; i++)
+      lCnstr[i] = DLPROOFS::LinConstraint(); // make sure they are empty
+
     EVector Rx = R*xvec;
 
     // The element <ctVec,R*xvec>
@@ -178,6 +181,7 @@ void proveEncryption(ProverData& pd,
 {
     VerifierData& vd = *(pd.vd);
     int kk = vd.gk->kay * GlobalKey::ell;
+    int nn = vd.gk->enn * GlobalKey::ell;
 
     // commitment to encrypted plaintext and randomness, wrt the G's
     vd.pt2Com = commit(ptxt, vd.pt2Idx, vd.Gs, pd.pt2Rnd);
@@ -205,11 +209,15 @@ void proveEncryption(ProverData& pd,
     EVector padR, pad1Hi, pad1Lo, pad2Hi, pad2Lo;
     BigInt loBound = vd.radix * SQRT_JL;
     BigInt hi1Bound = (vd.B_eNoise1 / vd.radix) +int(ceil(sqrt(kk)));
-    BigInt hi2Bound = (vd.B_eNoise2 / vd.radix) +int(ceil(sqrt(kk)));
+    BigInt hi2Bound = (vd.B_eNoise2 / vd.radix) +int(ceil(sqrt(nn)));
 #ifdef DEBUGGING
     std::cout <<"B_r=2^"<<log2BI(vd.B_r)
         << ", |rComp|^2=2^"<<log2BI(normSquaredBigInt(compR)) <<std::endl;
-    std::cout <<"B_eNoise1=2^"<<log2BI(vd.B_eNoise1) <<std::endl;
+    std::cout <<"B_eNoise1=2^"<<log2BI(vd.B_eNoise1)
+        << ", B_eNoise2=2^"<<log2BI(vd.B_eNoise2) <<std::endl;
+    std::cout << "  |eNoise1|^2=2^"<<log2BI(normSquaredBigInt(compNoise1))
+        << ", |eNoise2|^2=2^"<<log2BI(normSquaredBigInt(compNoise1)) <<std::endl;
+
     std::cout << "  |eNoise1Hi|^2=2^"<<log2BI(normSquaredBigInt(comp1Hi))
         << ", hi1Bound = 2^"<<log2BI(hi1Bound)<<std::endl;
     std::cout << "  |eNoise1Lo|^2=2^"<<log2BI(normSquaredBigInt(comp1Lo))
@@ -257,11 +265,17 @@ void proveEncryption(ProverData& pd,
 
     // Record the encryption linear constraints
 
+    DLPROOFS::LinConstraint* lCnstr1 = &(vd.linConstr[vd.eLin1Idx]);
+    DLPROOFS::LinConstraint* lCnstr2 = &(vd.linConstr[vd.eLin2Idx]);
+    for (int i=0; i<GlobalKey::ell; i++)
+      lCnstr1[i] = DLPROOFS::LinConstraint(); // make sure they are empty
+    for (int i=0; i<GlobalKey::ell; i++)
+      lCnstr2[i] = DLPROOFS::LinConstraint(); // make sure they are empty
+
     // First constraint: <x1*R1*A,r>
     //                   +<x1,eComp1Lo> +<x1*radix1,eCompHi> = x1*R1*ct1
 
     EVector xvec1;
-    DLPROOFS::LinConstraint* lCnstr1 = &(vd.linConstr[vd.eLin1Idx]);
     Element x1 = vd.mer->newElement("RegevEncChallenge1");
     powerVector(xvec1, x1, nRrows);
 
@@ -280,7 +294,6 @@ void proveEncryption(ProverData& pd,
     // Second constraint: <x2*R2*B,r> +<x2,eCompLo>
     //   + <radix2*x2,eCompHi> + <g*x2*R2,ptxt> = x2*R2*ct2
     EVector xvec2;
-    DLPROOFS::LinConstraint* lCnstr2 = &(vd.linConstr[vd.eLin2Idx]);
     Element x2 = vd.mer->newElement("RegevEncChallenge2");
     powerVector(xvec2, x2, nRrows);
 
@@ -481,9 +494,15 @@ void proveKeyGen(ProverData& pd, int pkNum,
     vd.mer->processPoint("RegevKGHi", vd.kCompLoCom);
     vd.mer->processPoint(std::string(), vd.kPadLoCom);
 
+    DLPROOFS::LinConstraint* lCnstr1 = &(vd.linConstr[vd.kLinIdx]);
+    DLPROOFS::LinConstraint* lCnstr2 = &(vd.linConstr[vd.sk2LinIdx]);
+    for (int i=0; i<GlobalKey::ell; i++)
+      lCnstr1[i] = DLPROOFS::LinConstraint(); // make sure they are empty
+    for (int i=0; i<GlobalKey::ell; i++)
+      lCnstr2[i] = DLPROOFS::LinConstraint(); // make sure they are empty
+
     // First linear constraint: <skey,A*R1*x1> +<eLo,x1> +<eHi,radix*x1> = b*R1*x1
     EVector xvec1;
-    DLPROOFS::LinConstraint* lCnstr1 = &(vd.linConstr[vd.kLinIdx]);
     Element x1 = vd.mer->newElement("RegevKGChallenge1");
     powerVector(xvec1, x1, nRcols);
 
@@ -500,7 +519,6 @@ void proveKeyGen(ProverData& pd, int pkNum,
 
     // Second linear constraint: <skComp,x2> -<skey, R2*x2> = 0
     EVector xvec2;
-    DLPROOFS::LinConstraint* lCnstr2 = &(vd.linConstr[vd.sk2LinIdx]);
     Element x2 = vd.mer->newElement("RegevKGChallenge2");
     powerVector(xvec2, x2, nRcols);
 
@@ -602,6 +620,7 @@ void proveReShare(ProverData& pd, const SVector& lagrange,
     assert(constrIdx+H.NumRows() <= vd.linConstr.size());
     for (int i=0; i<H.NumRows(); i++) { // the i'th constraint
         DLPROOFS::LinConstraint& lCnstr = vd.linConstr[constrIdx++];
+        lCnstr = DLPROOFS::LinConstraint(); // make sure it is empty
 
         // The terms H[i][0]*lagrange[j] * pt1[j]
         int varIdx = vd.pt1Idx;
@@ -715,8 +734,12 @@ void proveSmallness(ProverData& pd) {
 
     // Record the linear constraint <pd.compressed,R*x> + <y,x> = <z,x>
     DLPROOFS::LinConstraint* lCnstr = &(vd.linConstr[vd.smlnsLinIdx]);
+    for (int i=0; i<GlobalKey::ell; i++)
+      lCnstr[i] = DLPROOFS::LinConstraint(); // make sure they are empty
+
     assert(lCnstr[0].equalsTo == CRV25519::Scalar() && lCnstr[0].terms.size()==0);
     assert(lCnstr[1].equalsTo == CRV25519::Scalar() && lCnstr[1].terms.size()==0);
+
     EVector xvec;
     Element x = vd.mer->newElement("SmallnessChallenge");
     powerVector(xvec, x, nCols); // the vector xvec=(1,x,x^2,...)
@@ -866,7 +889,7 @@ void ReadyToProve::aggregateProver(ProverData& pd)
         +pd.eComp1LoRnd +pd.eComp2HiRnd +pd.eComp2LoRnd +pd.sk2CompRnd
         +pd.kCompHiRnd +pd.kCompLoRnd;
 
-    // reset from original constraints
+    // reset original constraints
      {DLPROOFS::LinConstraint emptyLin;
      DLPROOFS::QuadConstraint emptyQuad;
     for (auto& lc : vd.linConstr) lc = emptyLin;

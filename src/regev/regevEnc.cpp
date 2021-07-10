@@ -243,7 +243,7 @@ void GlobalKey::internalEncrypt(EVector& ctxt1, EVector& ctxt2,
     }}
     resize(e2, enn);
     BoundedSizeElement noise2(sigmaEnc2);
-    BigInt bound = (BigInt(1)<<(2*sigmaEnc2)) * kay*ell/2;
+    BigInt bound = (BigInt(1)<<(2*sigmaEnc2)) * enn*ell/2;
     for (int nTrials = 0; ; nTrials++) {
         if (++nTrials > 50)
             throw std::runtime_error("internalEncrypt: too many retrys choosing e2");

@@ -54,6 +54,13 @@ typedef NTL::mat_ZZ_p SMatrix;
 typedef NTL::vec_ZZ_pE EVector;
 typedef NTL::mat_ZZ_pE EMatrix;
 
+inline BigInt divCeil(const BigInt& x, const BigInt& overY) {
+    return (x+overY-1)/overY;
+}
+inline BigInt divCeil(const BigInt& x, long overY) {
+    return (x+overY-1)/overY;
+}
+
 inline int bytesPerScalar() { return (NumBits(NTL::ZZ_p::modulus())+7)/8; }
 inline int scalarsPerElement() { return NTL::ZZ_pE::degree(); }
 
