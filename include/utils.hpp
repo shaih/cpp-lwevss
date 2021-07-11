@@ -128,5 +128,4 @@ inline std::ostream& operator<<(std::ostream& st, const std::set<size_t>& intSet
     return st << '}';
 }
 
-
 #endif // ifndef _UTILS_HPP_

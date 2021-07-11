@@ -76,6 +76,7 @@ int main(int argc, char** argv) {
     std::vector<ALGEBRA::EVector> sk(gpk.enn);
     std::vector<ALGEBRA::EVector> pk(gpk.enn);
     auto start = chrono::steady_clock::now();
+    crsTicks = 0;
     for (int i=0; i<gpk.enn; i++) {
         std::tie(sk[i],pk[i]) = gpk.genKeys(&kgNoise[i]);
         gpk.addPK(pk[i]);
@@ -83,8 +84,8 @@ int main(int argc, char** argv) {
     gpk.setKeyHash();
     auto end = chrono::steady_clock::now();
     auto ticks = chrono::duration_cast<chrono::milliseconds>(end - start).count();
-    std::cout << gpk.enn << " keyGens in "<<ticks<<" milliseconds, avg="
-        << (ticks/double(gpk.enn)) << std::endl;
+    std::cout <<gpk.enn<<" keyGens in "<<ticks<<" milliseconds, avg="<<(ticks/double(gpk.enn))
+        << " ("<< (crsTicks/double(gpk.enn)) << " for s x A)\n";
 
     // encryption
     std::vector<ALGEBRA::SVector> ptxt1(gpk.enn);
@@ -97,13 +98,14 @@ int main(int argc, char** argv) {
         for (int j=0; j<gpk.enn; j++) ptxt1[i][j] = sshr[i+1];
     }
     start = chrono::steady_clock::now();
+    crsTicks = 0;
     for (int i=0; i<gpk.enn; i++) {
         ctxt1[i] = gpk.encrypt(ptxt1[i]);
     }
     end = chrono::steady_clock::now();
     ticks = chrono::duration_cast<chrono::milliseconds>(end - start).count();
-    std::cout << gpk.tee << " encryptions in "<<ticks<<" milliseconds, avg="
-        << (ticks/double(gpk.tee)) << std::endl;
+    std::cout <<gpk.enn<<" encryptions in "<<ticks<<" milliseconds, avg="<<(ticks/double(gpk.enn)) 
+        << " ("<< (crsTicks/double(gpk.enn)) << " for A x r)\n";
 
     // decryption at party #1
     ALGEBRA::SVector ptxt2;    resize(ptxt2, gpk.tee);
@@ -151,6 +153,7 @@ int main(int argc, char** argv) {
     start = chrono::steady_clock::now();
     SVector lagrange = vd.sp->lagrangeCoeffs(interval(1,gpk.tee+1));
 
+    crsTicks = 0;
     proveDecryption(pd, ctxtMat, ctxtVec, ptxt2, sk[partyIdx], decNoise);
     proveEncryption(pd, ctxt2.first, ctxt2.second, ptxt3, encRnd, eNoise.first, eNoise.second);
     proveKeyGen(pd, partyIdx, sk[partyIdx], kgNoise[partyIdx]);
@@ -161,7 +164,8 @@ int main(int argc, char** argv) {
     ticks = chrono::duration_cast<chrono::milliseconds>(end - start).count();
     std::cout << "preparing to prove and committing in "<<ticks<< " milliseconds, "
         << DLPROOFS::Point::counter << " exponentiations in "
-        << ((500+DLPROOFS::Point::timer)/1000) << " milliseconds\n";
+        << ((500+DLPROOFS::Point::timer)/1000) << " milliseconds"
+        << " ("<< crsTicks << " for xR x A)\n";
 
     // aggregate the constraints and flatten everything before proving
     DLPROOFS::Point::counter = 0;

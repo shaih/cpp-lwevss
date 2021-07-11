@@ -37,7 +37,6 @@
 namespace DLPROOFS {
 using CRV25519::Scalar, CRV25519::Point, Merlin::MerlinBPctx;
 
-//#define DEBUGGING
 #ifdef DEBUGGING
 std::vector<Scalar> dbg_x, dbg_xInv;
 Point FF;

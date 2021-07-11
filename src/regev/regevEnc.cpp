@@ -21,6 +21,7 @@
  * ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
  * OTHER DEALINGS IN THE SOFTWARE.
  **/
+#include <chrono>
 #include <iostream>
 #include <cmath>
 #include <cassert>
@@ -30,8 +31,6 @@ extern "C" {
     #include <sodium.h>
 }
 using namespace ALGEBRA;
-
-//#define DEBUGGING
 
 namespace REGEVENC {
 
@@ -157,6 +156,7 @@ size_t GlobalKey::addPK(const EVector& pk) { // This function is NOT thread-safe
     return idx;
 }
 
+long crsTicks = 0;
 void GlobalKey::internalKeyGen(EVector& sk, EVector& pk, EVector& noise) const
 {
     // allocate space for the different components
@@ -190,7 +190,10 @@ void GlobalKey::internalKeyGen(EVector& sk, EVector& pk, EVector& noise) const
         if (normSquaredBigInt(noise) <= bound)
             break;
     }
+    auto start = std::chrono::steady_clock::now();
     pk = sk * A + noise;
+    crsTicks += std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now()-start).count();
     //printEvec(std::cout<<"keygen noise = ",noise) << std::endl;
 }
 
@@ -225,7 +228,10 @@ void GlobalKey::internalEncrypt(EVector& ctxt1, EVector& ctxt2,
     }}
 
     // Compute an encrypiton of zero as (CRS*arr, PK*arr)
+    auto start = std::chrono::steady_clock::now();
     ctxt1 = A * arr;
+    crsTicks += std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now()-start).count();
     ctxt2 = B * arr;
 
     // choose bounded-size noise

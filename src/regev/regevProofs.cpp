@@ -26,8 +26,6 @@
 #include "utils.hpp"
 #include "regevProofs.hpp"
 
-#define DEBUGGING
-
 using namespace ALGEBRA;
 
 namespace REGEVENC {
@@ -283,8 +281,12 @@ void proveEncryption(ProverData& pd,
     EVector xR1 = xvec1*R1;
     setEqsTo(lCnstr1, innerProduct(xR1, ct1));
 
-    // The term <x1*R1*A,r> 
-    expandConstraints(lCnstr1, vd.rIdx, xR1 * vd.gk->A);
+    // The term <x1*R1*A,r>
+    auto start = std::chrono::steady_clock::now();
+    {auto xR1A = xR1 * vd.gk->A;
+    crsTicks += std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now()-start).count();
+    expandConstraints(lCnstr1, vd.rIdx, xR1A);}
 
     // The terms <x1,eComp1Lo>  and <x1*radix1,eCompHi>
     expandConstraints(lCnstr1, vd.eComp1LoIdx, xvec1);

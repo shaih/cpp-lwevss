@@ -29,7 +29,7 @@
 
 #include "algebra.hpp"
 
-#define DEBUGGING
+//#define DEBUGGING
 
 namespace REGEVENC {
 struct KeyParams;
@@ -236,6 +236,8 @@ struct KeyParams {
         setParams();
     }
 };
+
+extern long crsTicks;
 
 } // end of namespace REGEVENC
 #endif // ifndef _REGEVENC_HPP_
