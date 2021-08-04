@@ -175,9 +175,9 @@ public:
     void operator()(unsigned char* data) const override {
         unsigned int r = randombytes_random();
         // A random 32-bit word, we only use two bits of it
-        if (r & 1 != 0) {
+        if ((r & 1) != 0) {
             data[0] = 1;
-            if (r & 2 != 0)
+            if ((r & 2) != 0)
                 crypto_core_ed25519_scalar_negate(data, data);
         }
     }

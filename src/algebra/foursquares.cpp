@@ -74,7 +74,7 @@ static bool maybeSquare(const NTL::ZZ& n) {
 // returns a square-root of -1 mod p if found, otherwise returns zero.
 // Will only be called when p<281.
 static int iunit_small(int p) {
-    if (p<281 && p&3==1) {
+    if (p<281 && (p&3)==1) {
         for (long i=2; i<=p/2; i++)
             if ((i*i) % p == (p-1))
                 return i;
