@@ -1,4 +1,5 @@
 #include <iostream>
+#include <array>
 #include "utils.hpp"
 #include "tests.hpp" // define strings LWEVSS_TESTS::passed and LWEVSS_TESTS::failed
 

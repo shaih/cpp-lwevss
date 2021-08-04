@@ -33,6 +33,10 @@ include_directories("${CMAKE_CURRENT_SOURCE_DIR}/include")
 # Source files are found under the src directory
 file(GLOB SOURCES src/*/*.cpp src/libmerlin/merlin.c)
 add_library(lwe-pvss STATIC ${SOURCES})
+target_include_directories(lwe-pvss PUBLIC
+        ${NTL_INCLUDE_PATHS}
+        ${sodium_INCLUDE_DIR}
+        )
 
 set(PROJECT_LIBS lwe-pvss ${sodium_LIBRARY_DEBUG} ${NTL_LIBRARIES} ${GMP_LIBRARIES} pthread)
 # SET(EXTRAOBJS "${CMAKE_CURRENT_SOURCE_DIR}/src/libmerlin/merlin.o")
