@@ -9,9 +9,13 @@ This is a cmake project, but the directory structure tries to mimic Go conventio
 
 + `25519` - wrapper around libsodium, namespace CRV25519. Provide classes `Point` and `Scalar`. See `point25519.hpp`, `scalar25519.hpp` in the include directory.
 
++ `algebra` - wrapper around NTL, namespace ALGEBRA. Should make using packages other than NTL in the future a little easier. See `algebra.hpp` in the include directory.
+
 + `dlproofs` - implementation of [Bulletproofs](https://crypto.stanford.edu/bulletproofs/)-like proofs, namespace DLPROOFS. Provides proofs for linear and quadratic constraints, as well as proving the norm-squared (mod P) of a vector. See `constraints.hpp` `pedersen.hpp` `bulletproof.hpp` in the includes directory.
 
-+ `regev` - implementation of Regev encryption (and in the future also proofs related to it), namespace REGEVENC. See `regevEnc.hpp` in the includes directory.
+* `tools` - currently contains only tools related to Shamir secret sharingrx, namespace TOOLS. See `shamir.hpp` in the includes directory.
+
++ `regev` - implementation of Regev encryption and proofs related to it, namespace REGEVENC. See `regevEnc.hpp` and `regevProofs.hpp` in the includes directory.
 
 + `libmerlin` - Henry de Valence's one-file "C" implementation of Merlin transcripts. Taken (with minor fixes) from https://github.com/hdevalence/libmerlin (commit 4bf6228), but separated the "c" and "h" files to different directories. A C++ wrapper found in `merlin.hpp` in the include directory.
 
