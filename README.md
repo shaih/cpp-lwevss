@@ -1,7 +1,11 @@
 # cpp-lwevss
-C++ implementation of VSS using LWE encryption and proofs. Written mostly by [Shai Halevi](https://alum.mit.edu/www/shaih).
-This is a proof-of-concept implementation, **it is not suitable for use in production**.
-The code is documented extensively, and we made an effort to separate out (some of) the performance-sensitive parts so they can be optimized on their own.
+C++ implementation of VSS using LWE encryption and proofs, as described in the article:
+
+[Practical Non-interactive Publicly Verifiable Secret Sharing with Thousands of Parties](https://eprint.iacr.org/2021/1397), by Craig Gentry and Shai Halevi and Vadim Lyubashevsky, [Cryptology ePrint Archive](https://eprint.iacr.org): Report 2021/1397.
+
+This implementation was written mostly by [Shai Halevi](https://alum.mit.edu/www/shaih).
+It is a proof-of-concept and **is not suitable for use in production**.
+The code is documented internally, and we made some effort to separate out performance-sensitive parts so they can be optimized on their own.
 
 ### Structure
 
@@ -13,7 +17,7 @@ This is a cmake project, but the directory structure tries to mimic Go conventio
 
 + `dlproofs` - implementation of [Bulletproofs](https://crypto.stanford.edu/bulletproofs/)-like proofs, namespace DLPROOFS. Provides proofs for linear and quadratic constraints, as well as proving the norm-squared (mod P) of a vector. See `constraints.hpp` `pedersen.hpp` `bulletproof.hpp` in the includes directory.
 
-* `tools` - currently contains only tools related to Shamir secret sharingrx, namespace TOOLS. See `shamir.hpp` in the includes directory.
+* `tools` - currently contains only tools related to Shamir secret sharing, namespace TOOLS. See `shamir.hpp` in the includes directory.
 
 + `regev` - implementation of Regev encryption and proofs related to it, namespace REGEVENC. See `regevEnc.hpp` and `regevProofs.hpp` in the includes directory.
 
